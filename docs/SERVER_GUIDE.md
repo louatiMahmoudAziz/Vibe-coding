@@ -7,7 +7,10 @@ machine has Python 3.10+, it runs.
 ## What participants experience
 
 1. They open the **signup link** you share (`http://<host>:8000/signup`),
-   enter their name, and land on a personal page with a secret URL.
+   create an account (name + password), and land on their personal upload
+   page. They can get back to it anytime by **logging in** at
+   `http://<host>:8000/login` from any device — or via their bookmarked
+   page URL.
 2. They upload their AI-generated `policy.py` (file picker or paste box)
    as often as they like — a 15 s cooldown stops accidental spam.
 3. Each upload is queued and evaluated automatically (5 scenarios × 3
@@ -68,6 +71,12 @@ Security notes for the venue:
   and terminate it after the event.
 - The signup link is open by design (anyone with it can register a name).
   For a public network, keep the URL unlisted or restrict by source IP.
+- Passwords are salted PBKDF2-SHA256 hashes in the SQLite database, and
+  accounts created before the login feature keep working via their
+  bookmark link (they just can't use the login form). There is no
+  password-reset flow — for a lost password, an organizer can look up the
+  participant's page token: `sqlite3 server_data/board.sqlite3 "SELECT
+  name, token FROM participants"` and hand back `http://<host>:8000/p/<token>`.
 
 ## How evaluation works
 
@@ -103,7 +112,8 @@ but the export path is simpler and keeps the finals reproducible.
 | Route | What |
 |-------|------|
 | `GET /` | live leaderboard page |
-| `GET /signup`, `POST /signup` | signup form / create participant |
+| `GET /signup`, `POST /signup` | account creation (name + password) |
+| `GET /login`, `POST /login` | log back in to the personal upload page |
 | `GET /p/<token>` | personal upload page (secret) |
 | `POST /p/<token>/upload` | submit code (multipart file or `code` field) |
 | `GET /api/leaderboard` | standings JSON (what the page polls) |

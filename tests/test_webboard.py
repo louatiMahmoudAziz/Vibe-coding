@@ -50,20 +50,60 @@ class TestDb(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_signup_and_duplicate_rejection(self):
-        person = db.create_participant(self.db_path, "  Team   Rocket ")
+        person = db.create_participant(self.db_path, "  Team   Rocket ", "hunter2")
         self.assertEqual(person["name"], "Team Rocket")
         self.assertTrue(person["token"])
         with self.assertRaises(db.SignupError):
-            db.create_participant(self.db_path, "team rocket")  # case-insensitive
+            db.create_participant(self.db_path, "team rocket", "x" * 8)  # case-insensitive
 
     def test_name_validation(self):
         for bad in ("", "x", "a" * 41, "<script>"):
             with self.assertRaises(db.SignupError):
-                db.create_participant(self.db_path, bad)
+                db.create_participant(self.db_path, bad, "hunter2")
+
+    def test_password_validation(self):
+        for bad in ("", "abc", "x" * 65):
+            with self.assertRaises(db.SignupError):
+                db.create_participant(self.db_path, "Valid Name", bad)
+
+    def test_authenticate(self):
+        created = db.create_participant(self.db_path, "Login Team", "s3cret")
+        person = db.authenticate(self.db_path, "login team", "s3cret")
+        self.assertIsNotNone(person)
+        self.assertEqual(person["token"], created["token"])
+        self.assertIsNone(db.authenticate(self.db_path, "Login Team", "wrong"))
+        self.assertIsNone(db.authenticate(self.db_path, "Nobody", "s3cret"))
+
+    def test_passwords_are_hashed_not_stored(self):
+        db.create_participant(self.db_path, "Hash Check", "plaintext-pw")
+        with db.connect(self.db_path) as conn:
+            row = conn.execute("SELECT password_hash FROM participants").fetchone()
+        self.assertNotIn("plaintext-pw", row["password_hash"])
+        self.assertTrue(row["password_hash"].startswith("pbkdf2_sha256$"))
+
+    def test_migration_of_pre_password_database(self):
+        legacy_path = Path(self.tmp.name) / "legacy.sqlite3"
+        with db.connect(legacy_path) as conn:
+            conn.execute(
+                "CREATE TABLE participants (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "token TEXT NOT NULL UNIQUE, created_at REAL NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO participants (name, token, created_at) "
+                "VALUES ('Old Timer', 'legacy-token', 1.0)"
+            )
+        db.init(legacy_path)  # must add password_hash without losing data
+        person = db.participant_by_token(legacy_path, "legacy-token")
+        self.assertEqual(person["name"], "Old Timer")
+        # Legacy accounts have no password, so login is refused (token still works).
+        self.assertIsNone(db.authenticate(legacy_path, "Old Timer", "anything"))
+        # New accounts work normally on the migrated database.
+        db.create_participant(legacy_path, "New Kid", "s3cret")
+        self.assertIsNotNone(db.authenticate(legacy_path, "New Kid", "s3cret"))
 
     def test_leaderboard_ranks_by_best_then_first(self):
-        alice = db.create_participant(self.db_path, "Alice")
-        bob = db.create_participant(self.db_path, "Bob")
+        alice = db.create_participant(self.db_path, "Alice", "password")
+        bob = db.create_participant(self.db_path, "Bob", "password")
         for person, score in ((alice, 50.0), (bob, 70.0), (alice, 70.0)):
             sub = db.create_submission(self.db_path, person["id"])
             db.set_submission_code_path(self.db_path, sub, "x.py")
@@ -118,12 +158,33 @@ class TestServerEndToEnd(unittest.TestCase):
 
         # 2. Sign up -> redirected to a personal page with a token.
         response = self._post(
-            "/signup", b"name=The+Testers", "application/x-www-form-urlencoded"
+            "/signup",
+            b"name=The+Testers&password=swordfish",
+            "application/x-www-form-urlencoded",
         )
         self.assertEqual(response.status, 303)
         location = response.headers["Location"]
         self.assertTrue(location.startswith("/p/"))
         token = location.split("/p/")[1].split("?")[0]
+
+        # 2b. Logging in with the same credentials recovers the same page.
+        response = self._post(
+            "/login",
+            b"name=the+testers&password=swordfish",
+            "application/x-www-form-urlencoded",
+        )
+        self.assertEqual(response.status, 303)
+        self.assertEqual(
+            response.headers["Location"].split("?")[0], f"/p/{token}"
+        )
+
+        # 2c. A wrong password is rejected.
+        response = self._post(
+            "/login",
+            b"name=The+Testers&password=nope",
+            "application/x-www-form-urlencoded",
+        )
+        self.assertEqual(response.status, 401)
 
         # 3. Upload a known-good policy (multipart, like the browser form).
         boundary = "XBOUNDARY"
@@ -176,7 +237,9 @@ class TestServerEndToEnd(unittest.TestCase):
 
     def test_broken_upload_gets_error_status_not_crash(self):
         response = self._post(
-            "/signup", b"name=Broken+Bots", "application/x-www-form-urlencoded"
+            "/signup",
+            b"name=Broken+Bots&password=swordfish",
+            "application/x-www-form-urlencoded",
         )
         token = response.headers["Location"].split("/p/")[1].split("?")[0]
         bad_code = "class Policy:\n    def decide(self, obs):\n        return 'WARP'\n"
