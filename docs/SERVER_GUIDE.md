@@ -8,9 +8,10 @@ machine has Python 3.10+, it runs.
 
 1. They open the **signup link** you share (`http://<host>:8000/signup`),
    create an account (name + password), and land on their personal upload
-   page. They can get back to it anytime by **logging in** at
-   `http://<host>:8000/login` from any device — or via their bookmarked
-   page URL.
+   page. The browser **stays signed in** (30-day session cookie) until they
+   log out via the menu under their name in the top-right corner; from
+   another device they log in at `http://<host>:8000/login`. Opening a
+   bookmarked personal-page URL also signs that browser in.
 2. They upload their AI-generated `policy.py` (file picker or paste box)
    as often as they like — a 15 s cooldown stops accidental spam.
 3. Each upload is queued and evaluated automatically (5 scenarios × 3
@@ -113,7 +114,10 @@ but the export path is simpler and keeps the finals reproducible.
 |-------|------|
 | `GET /` | live leaderboard page |
 | `GET /signup`, `POST /signup` | account creation (name + password) |
-| `GET /login`, `POST /login` | log back in to the personal upload page |
+| `GET /login`, `POST /login` | log in (starts a 30-day session cookie) |
+| `GET /me` | redirect to your upload page (session cookie required) |
+| `GET /logout` | end the session and return to the leaderboard |
+| `GET /api/session` | who am I (drives the top-right user menu) |
 | `GET /p/<token>` | personal upload page (secret) |
 | `POST /p/<token>/upload` | submit code (multipart file or `code` field) |
 | `GET /api/leaderboard` | standings JSON (what the page polls) |
