@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Flow Challenge - Leaderboard</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #131a30;
+    --panel-2: #182142;
+    --text: #e8ecf8;
+    --muted: #8b93b0;
+    --accent: #ffd166;
+    --green: #2ee6a8;
+    --amber: #ffb84d;
+    --red: #ff6b81;
+    --line: #232c4e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    background:
+      radial-gradient(1100px 500px at 85% -10%, #1b2a5e 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, #10305e33 0%, transparent 60%),
+      var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 40px 20px 64px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 18px; margin-bottom: 8px; }
+  .signal { display: flex; flex-direction: column; gap: 6px; background: #0a0e1c;
+            border: 1px solid var(--line); border-radius: 12px; padding: 10px 8px; }
+  .lamp { width: 16px; height: 16px; border-radius: 50%; opacity: 0.25; }
+  .lamp.red { background: var(--red); }
+  .lamp.amber { background: var(--amber); }
+  .lamp.green { background: var(--green); opacity: 1;
+                box-shadow: 0 0 14px 2px #2ee6a877; }
+  h1 { font-size: 30px; margin: 0; letter-spacing: 0.3px; }
+  h1 small { display: block; font-size: 14px; font-weight: 500; color: var(--muted); margin-top: 4px; }
+  .meta { color: var(--muted); font-size: 13px; margin: 14px 2px 26px; }
+  .meta code { color: var(--accent); background: #ffffff10; padding: 1px 7px; border-radius: 6px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0;
+          background: var(--panel); border: 1px solid var(--line);
+          border-radius: 14px; overflow: hidden; }
+  thead th { position: sticky; top: 0; background: var(--panel-2); color: var(--muted);
+             font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;
+             padding: 13px 12px; text-align: right; border-bottom: 1px solid var(--line); }
+  thead th.team, thead th.rank { text-align: left; }
+  tbody td { padding: 13px 12px; text-align: right; border-bottom: 1px solid var(--line);
+             font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: #ffffff08; }
+  td.team { text-align: left; font-weight: 600; }
+  td.rank { text-align: left; }
+  .badge { display: inline-flex; align-items: center; justify-content: center;
+           min-width: 34px; height: 34px; border-radius: 10px; font-weight: 800;
+           background: #ffffff12; color: var(--muted); }
+  tr.p1 .badge { background: linear-gradient(160deg, #ffd166, #ff9a3d); color: #201200; }
+  tr.p2 .badge { background: linear-gradient(160deg, #cfd8ea, #93a3c0); color: #101828; }
+  tr.p3 .badge { background: linear-gradient(160deg, #e6a171, #b3663a); color: #21100a; }
+  .total { font-size: 17px; font-weight: 800; color: var(--accent); }
+  .cell { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 74px; }
+  .bar { width: 74px; height: 5px; border-radius: 3px; background: #ffffff14; overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: 3px; }
+  .ok    { background: linear-gradient(90deg, #2ee6a8, #7bffcf); }
+  .warn  { background: linear-gradient(90deg, #ffb84d, #ffd166); }
+  .bad   { background: linear-gradient(90deg, #ff6b81, #ff9a8b); }
+  .status-ok { color: var(--green); font-weight: 600; }
+  .status-err { color: var(--red); font-weight: 600; }
+  .errors { margin-top: 26px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 14px; padding: 18px 22px; }
+  .errors h2 { margin: 0 0 10px; font-size: 15px; color: var(--red); }
+  .errors code { color: #ffc4cd; font-size: 12.5px; }
+  .errors li { margin: 5px 0; color: var(--muted); }
+  footer { margin-top: 26px; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  footer code { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="signal" aria-hidden="true">
+      <div class="lamp red"></div><div class="lamp amber"></div><div class="lamp green"></div>
+    </div>
+    <h1>Traffic Flow Challenge
+      <small>Optimize latency vs. throughput &mdash; adaptive signal control for a four-way intersection</small>
+    </h1>
+  </header>
+  <p class="meta">Generated <code>2026-08-27 17:01 UTC</code> &middot; evaluation seeds <code>101, 202, 303</code>
+     &middot; 5 scenarios &times; 3 seeds per team &middot; max score <code>100</code></p>
+  <table>
+    <thead>
+      <tr>
+        <th class="rank">#</th>
+        <th class="team">Team</th>
+        <th>Total</th>
+        <th title="Moderate, symmetric demand on all approaches for 15 minutes. A reasonable policy should serve nearly everyone quickly.">Balanced Commute</th>
+        <th title="Heavy through-traffic on the North-South axis with light cross-traffic. Give the main artery the green time it needs without starving the side streets and left-turners.">North-South Rush Hour</th>
+        <th title="A quiet grid until a stadium empties: East-West demand spikes hard for four minutes, then fades. Detect the surge, absorb it, and drain the residual queues before time runs out.">Flash Crowd</th>
+        <th title="3 a.m. traffic: a car every so often, from random directions. Throughput is easy; the win is not making a lone driver sit at an empty intersection while phantom phases cycle.">Night Trickle</th>
+        <th title="Twenty minutes at ~95% of practical capacity, with the dominant axis flipping from North-South to East-West at half-time. Every wasted second of green shows up in the score, and left-turn lanes are one bad policy away from starvation.">Gridlock Stress Test</th>
+        <th>Avg&nbsp;wait</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="p1">
+        <td class="rank"><span class="badge">1</span></td>
+        <td class="team">Baseline: Max Pressure</td>
+        <td class="total">58.71</td>
+        <td><span class="cell"><b>91.7</b><span class="bar"><span class="ok" style="width:92%"></span></span></span></td>
+        <td><span class="cell"><b>10.2</b><span class="bar"><span class="bad" style="width:10%"></span></span></span></td>
+        <td><span class="cell"><b>90.2</b><span class="bar"><span class="ok" style="width:90%"></span></span></span></td>
+        <td><span class="cell"><b>96.5</b><span class="bar"><span class="ok" style="width:96%"></span></span></span></td>
+        <td><span class="cell"><b>4.9</b><span class="bar"><span class="bad" style="width:5%"></span></span></span></td>
+        <td>84.7s</td>
+        <td><span class="status-ok">ok</span></td>
+      </tr>
+      <tr class="p2">
+        <td class="rank"><span class="badge">2</span></td>
+        <td class="team">Baseline: Greedy Queue</td>
+        <td class="total">48.39</td>
+        <td><span class="cell"><b>85.6</b><span class="bar"><span class="ok" style="width:86%"></span></span></span></td>
+        <td><span class="cell"><b>12.4</b><span class="bar"><span class="bad" style="width:12%"></span></span></span></td>
+        <td><span class="cell"><b>56.2</b><span class="bar"><span class="warn" style="width:56%"></span></span></span></td>
+        <td><span class="cell"><b>83.4</b><span class="bar"><span class="ok" style="width:83%"></span></span></span></td>
+        <td><span class="cell"><b>4.2</b><span class="bar"><span class="bad" style="width:4%"></span></span></span></td>
+        <td>107.9s</td>
+        <td><span class="status-ok">ok</span></td>
+      </tr>
+      <tr class="p3">
+        <td class="rank"><span class="badge">3</span></td>
+        <td class="team">Baseline: Fixed Timer</td>
+        <td class="total">40.07</td>
+        <td><span class="cell"><b>53.1</b><span class="bar"><span class="warn" style="width:53%"></span></span></span></td>
+        <td><span class="cell"><b>8.5</b><span class="bar"><span class="bad" style="width:8%"></span></span></span></td>
+        <td><span class="cell"><b>30.1</b><span class="bar"><span class="bad" style="width:30%"></span></span></span></td>
+        <td><span class="cell"><b>91.1</b><span class="bar"><span class="ok" style="width:91%"></span></span></span></td>
+        <td><span class="cell"><b>17.6</b><span class="bar"><span class="bad" style="width:18%"></span></span></span></td>
+        <td>97.5s</td>
+        <td><span class="status-ok">ok</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <footer>
+    Per-scenario score = <code>60 &times; throughput</code> + <code>40 &times; latency</code>
+    &minus; <code>starvation penalty</code>; total is the average across scenarios.
+    Bars show each scenario score out of 100.
+    Rebuild with <code>python scripts/build_leaderboard.py</code>.
+  </footer>
+</div>
+</body>
+</html>
