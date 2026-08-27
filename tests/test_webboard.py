@@ -134,13 +134,8 @@ class TestServerEndToEnd(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def _post(self, path, data, content_type, follow=False):
-        request = urllib.request.Request(
-            self.base + path, data=data, headers={"Content-Type": content_type}
-        )
-        if follow:
-            return urllib.request.urlopen(request, timeout=10)
-
+    @staticmethod
+    def _open_no_redirect(request):
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, *args, **kwargs):
                 return None
@@ -149,7 +144,15 @@ class TestServerEndToEnd(unittest.TestCase):
         try:
             return opener.open(request, timeout=10)
         except urllib.error.HTTPError as response:
-            return response  # 303 arrives here with NoRedirect
+            return response  # 3xx/4xx arrive here with NoRedirect
+
+    def _post(self, path, data, content_type, follow=False):
+        request = urllib.request.Request(
+            self.base + path, data=data, headers={"Content-Type": content_type}
+        )
+        if follow:
+            return urllib.request.urlopen(request, timeout=10)
+        return self._open_no_redirect(request)
 
     def test_full_flow_signup_upload_score(self):
         # 1. Pages are served.
@@ -167,7 +170,8 @@ class TestServerEndToEnd(unittest.TestCase):
         self.assertTrue(location.startswith("/p/"))
         token = location.split("/p/")[1].split("?")[0]
 
-        # 2b. Logging in with the same credentials recovers the same page.
+        # 2b. Logging in with the same credentials recovers the same page
+        #     and starts a session (cookie set).
         response = self._post(
             "/login",
             b"name=the+testers&password=swordfish",
@@ -177,14 +181,49 @@ class TestServerEndToEnd(unittest.TestCase):
         self.assertEqual(
             response.headers["Location"].split("?")[0], f"/p/{token}"
         )
+        set_cookie = response.headers["Set-Cookie"]
+        self.assertIn("board_session=", set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+        cookie = set_cookie.split(";")[0]
 
-        # 2c. A wrong password is rejected.
+        # 2c. With the session cookie: /me redirects to the personal page,
+        #     and /api/session reports the signed-in name.
+        request = urllib.request.Request(
+            self.base + "/me", headers={"Cookie": cookie}
+        )
+        response = self._open_no_redirect(request)
+        self.assertEqual(response.status, 303)
+        self.assertEqual(response.headers["Location"], f"/p/{token}")
+        request = urllib.request.Request(
+            self.base + "/api/session", headers={"Cookie": cookie}
+        )
+        with urllib.request.urlopen(request, timeout=10) as api_response:
+            session = json.loads(api_response.read())
+        self.assertEqual(
+            session, {"authenticated": True, "name": "The Testers"}
+        )
+
+        # 2d. Logout clears the cookie; without it /me bounces to /login.
+        response = self._open_no_redirect(
+            urllib.request.Request(
+                self.base + "/logout", headers={"Cookie": cookie}
+            )
+        )
+        self.assertEqual(response.status, 303)
+        self.assertIn("Max-Age=0", response.headers["Set-Cookie"])
+        response = self._open_no_redirect(
+            urllib.request.Request(self.base + "/me")
+        )
+        self.assertEqual(response.headers["Location"], "/login")
+
+        # 2e. A wrong password is rejected and starts no session.
         response = self._post(
             "/login",
             b"name=The+Testers&password=nope",
             "application/x-www-form-urlencoded",
         )
         self.assertEqual(response.status, 401)
+        self.assertIsNone(response.headers.get("Set-Cookie"))
 
         # 3. Upload a known-good policy (multipart, like the browser form).
         boundary = "XBOUNDARY"

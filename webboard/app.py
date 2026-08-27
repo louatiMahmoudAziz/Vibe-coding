@@ -6,6 +6,7 @@ import json
 import time
 from email.parser import BytesParser
 from email.policy import default as _email_policy
+from http import cookies as http_cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, Optional, Sequence
@@ -18,6 +19,8 @@ from .evaluator import Evaluator
 
 MAX_UPLOAD_BYTES = 200_000
 UPLOAD_COOLDOWN_S = 15
+SESSION_COOKIE = "board_session"
+SESSION_MAX_AGE_S = 30 * 24 * 3600  # stay signed in for 30 days or until logout
 
 
 def parse_form(content_type: str, body: bytes) -> Dict[str, bytes]:
@@ -67,27 +70,68 @@ class BoardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002 - stdlib signature
         pass  # keep the console quiet during the workshop
 
-    def _send(self, status: int, content_type: str, payload: bytes) -> None:
+    def _send(
+        self,
+        status: int,
+        content_type: str,
+        payload: bytes,
+        set_cookie: Optional[str] = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(payload)
 
-    def _html(self, page: str, status: int = 200) -> None:
-        self._send(status, "text/html; charset=utf-8", page.encode("utf-8"))
+    def _html(
+        self, page: str, status: int = 200, set_cookie: Optional[str] = None
+    ) -> None:
+        self._send(
+            status, "text/html; charset=utf-8", page.encode("utf-8"), set_cookie
+        )
 
     def _json(self, obj, status: int = 200) -> None:
         self._send(
             status, "application/json", json.dumps(obj).encode("utf-8")
         )
 
-    def _redirect(self, location: str) -> None:
+    def _redirect(self, location: str, set_cookie: Optional[str] = None) -> None:
         self.send_response(303)
         self.send_header("Location", location)
         self.send_header("Content-Length", "0")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
+
+    # -- sessions -------------------------------------------------------------
+
+    @staticmethod
+    def _session_cookie(token: str) -> str:
+        return (
+            f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_MAX_AGE_S}; "
+            "HttpOnly; SameSite=Lax"
+        )
+
+    @staticmethod
+    def _logout_cookie() -> str:
+        return f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
+    def _session_participant(self) -> Optional[Dict]:
+        header = self.headers.get("Cookie")
+        if not header:
+            return None
+        jar = http_cookies.SimpleCookie()
+        try:
+            jar.load(header)
+        except http_cookies.CookieError:
+            return None
+        morsel = jar.get(SESSION_COOKIE)
+        if morsel is None or not morsel.value:
+            return None
+        return db.participant_by_token(self.server.db_path, morsel.value)
 
     def _read_body(self) -> bytes:
         length = int(self.headers.get("Content-Length") or 0)
@@ -103,12 +147,29 @@ class BoardHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             return self._html(pages.INDEX_HTML)
-        if path == "/signup":
-            return self._html(pages.signup_page())
-        if path == "/login":
-            return self._html(pages.login_page())
+        if path in ("/signup", "/login"):
+            # Already signed in? Straight to the upload page.
+            person = self._session_participant()
+            if person:
+                return self._redirect(f"/p/{person['token']}")
+            page = pages.signup_page() if path == "/signup" else pages.login_page()
+            return self._html(page)
+        if path == "/me":
+            person = self._session_participant()
+            if person:
+                return self._redirect(f"/p/{person['token']}")
+            return self._redirect("/login")
+        if path == "/logout":
+            return self._redirect("/", set_cookie=self._logout_cookie())
         if path == "/health":
             return self._json({"ok": True, "backlog": self.server.evaluator.backlog})
+        if path == "/api/session":
+            person = self._session_participant()
+            if person:
+                return self._json(
+                    {"authenticated": True, "name": person["name"]}
+                )
+            return self._json({"authenticated": False})
         if path == "/api/leaderboard":
             return self._api_leaderboard()
         parts = [p for p in path.split("/") if p]
@@ -117,7 +178,11 @@ class BoardHandler(BaseHTTPRequestHandler):
         if len(parts) == 2 and parts[0] == "p":
             person = db.participant_by_token(self.server.db_path, parts[1])
             if person:
-                return self._html(pages.ME_HTML)
+                # Opening a valid personal link signs this browser in
+                # (the link is the credential, like a magic link).
+                return self._html(
+                    pages.ME_HTML, set_cookie=self._session_cookie(parts[1])
+                )
         self._html(pages.NOT_FOUND_HTML, status=404)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
@@ -151,9 +216,10 @@ class BoardHandler(BaseHTTPRequestHandler):
         self._redirect(
             f"/p/{person['token']}?msg="
             + quote(
-                "Welcome! This is your upload page - bookmark it, "
-                "or log in with your name and password anytime."
-            )
+                "Welcome! This is your upload page. You'll stay signed in "
+                "on this device until you log out."
+            ),
+            set_cookie=self._session_cookie(person["token"]),
         )
 
     def _post_login(self, fields: Dict[str, bytes]) -> None:
@@ -164,7 +230,10 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._html(
                 pages.login_page("Wrong name or password."), status=401
             )
-        self._redirect(f"/p/{person['token']}?msg=" + quote("Welcome back!"))
+        self._redirect(
+            f"/p/{person['token']}?msg=" + quote("Welcome back!"),
+            set_cookie=self._session_cookie(person["token"]),
+        )
 
     def _post_upload(self, token: str, fields: Dict[str, bytes]) -> None:
         person = db.participant_by_token(self.server.db_path, token)
