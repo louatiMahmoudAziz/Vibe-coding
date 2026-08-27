@@ -1,0 +1,54 @@
+name: Evaluate submissions
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "submissions/**"
+      - "traffic_sim/**"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/evaluate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: Test harness and rank all teams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Harness unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate every submission
+        run: |
+          status=0
+          for team_dir in submissions/*/; do
+            name="$(basename "$team_dir")"
+            [ "${name#_}" != "$name" ] && continue  # skip _template
+            echo "::group::$name"
+            python scripts/validate_submission.py "$team_dir" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Build leaderboard (public seeds)
+        run: python scripts/build_leaderboard.py --out results
+
+      - name: Publish leaderboard to job summary
+        run: cat results/leaderboard.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload leaderboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard
+          path: results/
