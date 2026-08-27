@@ -105,6 +105,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._html(pages.INDEX_HTML)
         if path == "/signup":
             return self._html(pages.signup_page())
+        if path == "/login":
+            return self._html(pages.login_page())
         if path == "/health":
             return self._json({"ok": True, "backlog": self.server.evaluator.backlog})
         if path == "/api/leaderboard":
@@ -128,6 +130,8 @@ class BoardHandler(BaseHTTPRequestHandler):
 
         if path == "/signup":
             return self._post_signup(fields)
+        if path == "/login":
+            return self._post_login(fields)
         parts = [p for p in path.split("/") if p]
         if len(parts) == 3 and parts[0] == "p" and parts[2] == "upload":
             return self._post_upload(parts[1], fields)
@@ -137,14 +141,30 @@ class BoardHandler(BaseHTTPRequestHandler):
 
     def _post_signup(self, fields: Dict[str, bytes]) -> None:
         raw_name = fields.get("name", b"").decode("utf-8", "replace")
+        raw_password = fields.get("password", b"").decode("utf-8", "replace")
         try:
-            person = db.create_participant(self.server.db_path, raw_name)
+            person = db.create_participant(
+                self.server.db_path, raw_name, raw_password
+            )
         except db.SignupError as exc:
             return self._html(pages.signup_page(str(exc)), status=400)
         self._redirect(
             f"/p/{person['token']}?msg="
-            + quote("Welcome! Bookmark this page - it is your secret upload link.")
+            + quote(
+                "Welcome! This is your upload page - bookmark it, "
+                "or log in with your name and password anytime."
+            )
         )
+
+    def _post_login(self, fields: Dict[str, bytes]) -> None:
+        raw_name = fields.get("name", b"").decode("utf-8", "replace")
+        raw_password = fields.get("password", b"").decode("utf-8", "replace")
+        person = db.authenticate(self.server.db_path, raw_name, raw_password)
+        if person is None:
+            return self._html(
+                pages.login_page("Wrong name or password."), status=401
+            )
+        self._redirect(f"/p/{person['token']}?msg=" + quote("Welcome back!"))
 
     def _post_upload(self, token: str, fields: Dict[str, bytes]) -> None:
         person = db.participant_by_token(self.server.db_path, token)

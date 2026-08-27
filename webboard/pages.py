@@ -110,7 +110,8 @@ INDEX_HTML = f"""<!DOCTYPE html>
 {_HEADER}
   <p class="meta" id="meta">Loading&hellip;</p>
   <p style="margin: 0 0 18px"><a class="btn" href="/signup">Join the challenge</a>
-     <span class="hint" style="margin-left:12px">Sign up, get your personal upload link, submit your policy as often as you like &mdash; best score counts.</span></p>
+     <a class="btn secondary" href="/login" style="margin-left:8px">Log in</a>
+     <span class="hint" style="margin-left:12px">Create an account, upload your policy as often as you like &mdash; your best score counts.</span></p>
   <table>
     <thead><tr id="head-row"></tr></thead>
     <tbody id="rows"><tr><td class="empty" id="empty-cell">Waiting for the first participant&hellip;</td></tr></tbody>
@@ -223,18 +224,21 @@ SIGNUP_HTML = f"""<!DOCTYPE html>
 <div class="wrap" style="max-width: 640px">
 {_HEADER}
   <div class="card">
-    <h2>Join the challenge</h2>
+    <h2>Create your account</h2>
     __ERROR__
     <form method="post" action="/signup">
       <label for="name">Your name (or team name) &mdash; shown on the leaderboard</label>
       <input type="text" id="name" name="name" maxlength="40" required autofocus
              placeholder="e.g. Ada's Autobahn">
-      <p style="margin-top:18px"><button class="btn" type="submit">Create my upload page</button>
-         <a class="btn secondary" href="/" style="margin-left:8px">Back to leaderboard</a></p>
+      <label for="password">Password &mdash; so you can log back in from any device</label>
+      <input type="password" id="password" name="password" maxlength="64" required
+             placeholder="at least 4 characters">
+      <p style="margin-top:18px"><button class="btn" type="submit">Create account</button>
+         <a class="btn secondary" href="/login" style="margin-left:8px">I already have an account</a></p>
     </form>
-    <p class="hint">You'll be redirected to a personal page with a secret link.
-       <b>Bookmark it</b> &mdash; that link is how you upload new versions of your policy.
-       Upload as often as you like; your <b>best</b> score is what ranks.</p>
+    <p class="hint">You'll land on your personal upload page. Upload new versions of your
+       policy as often as you like; your <b>best</b> score is what ranks on the
+       <a href="/">leaderboard</a>. Lost the tab? Just <a href="/login">log in</a> again.</p>
   </div>
 </div>
 </body>
@@ -255,9 +259,10 @@ ME_HTML = f"""<!DOCTYPE html>
   <div class="card">
     <h2 id="hello">My submissions</h2>
     <div id="banner"></div>
-    <p class="hint">This page is your secret upload link &mdash; bookmark it.
-       Every upload is automatically evaluated on 5 scenarios &times; 3 seeds;
-       your best total ranks on the <a href="/">live leaderboard</a>.</p>
+    <p class="hint">This is your personal upload page &mdash; bookmark it, or
+       <a href="/login">log in</a> with your name and password to get back here
+       from any device. Every upload is automatically evaluated on 5 scenarios
+       &times; 3 seeds; your best total ranks on the <a href="/">live leaderboard</a>.</p>
     <form method="post" enctype="multipart/form-data" id="upload-form">
       <label>Upload your <code>policy.py</code> (must define <code>class Policy</code> with <code>decide(self, obs)</code>)</label>
       <input type="file" name="file" accept=".py,text/x-python">
@@ -342,6 +347,37 @@ setInterval(refresh, 3000);
 """
 
 
+LOGIN_HTML = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in - Traffic Flow Challenge</title>
+<style>{BASE_CSS}</style>
+</head>
+<body>
+<div class="wrap" style="max-width: 640px">
+{_HEADER}
+  <div class="card">
+    <h2>Log in</h2>
+    __ERROR__
+    <form method="post" action="/login">
+      <label for="name">Name (as shown on the leaderboard)</label>
+      <input type="text" id="name" name="name" maxlength="40" required autofocus>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" maxlength="64" required>
+      <p style="margin-top:18px"><button class="btn" type="submit">Log in</button>
+         <a class="btn secondary" href="/signup" style="margin-left:8px">Create an account</a></p>
+    </form>
+    <p class="hint">Logging in takes you back to your personal upload page.
+       Forgot your password? Ask an organizer &mdash; or if you still have your
+       upload page bookmarked, that link keeps working.</p>
+  </div>
+</div>
+</body>
+</html>
+"""
+
+
 NOT_FOUND_HTML = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Not found</title>
 <style>{BASE_CSS}</style></head>
@@ -357,3 +393,8 @@ Go back to the <a href="/">leaderboard</a> or <a href="/signup">sign up</a>.</p>
 def signup_page(error: str = "") -> str:
     block = f'<div class="msg err">{error}</div>' if error else ""
     return SIGNUP_HTML.replace("__ERROR__", block)
+
+
+def login_page(error: str = "") -> str:
+    block = f'<div class="msg err">{error}</div>' if error else ""
+    return LOGIN_HTML.replace("__ERROR__", block)

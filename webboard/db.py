@@ -7,6 +7,8 @@ safely.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
 import secrets
@@ -20,6 +22,7 @@ CREATE TABLE IF NOT EXISTS participants (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     token TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
     created_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_name
@@ -59,6 +62,45 @@ def init(db_path: Path) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # Migration for databases created before accounts had passwords.
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(participants)")
+        }
+        if "password_hash" not in columns:
+            conn.execute("ALTER TABLE participants ADD COLUMN password_hash TEXT")
+
+
+# -- passwords ---------------------------------------------------------------
+
+_PBKDF2_ITERATIONS = 200_000
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS
+    )
+    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def check_password(password: str, stored: str) -> bool:
+    try:
+        _algo, iterations, salt_hex, digest_hex = stored.split("$")
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            bytes.fromhex(salt_hex),
+            int(iterations),
+        )
+        return hmac.compare_digest(digest.hex(), digest_hex)
+    except (ValueError, AttributeError):
+        return False
+
+
+def normalize_password(raw: str) -> str:
+    if not 4 <= len(raw) <= 64:
+        raise SignupError("Password must be 4-64 characters.")
+    return raw
 
 
 def normalize_name(raw: str) -> str:
@@ -70,18 +112,34 @@ def normalize_name(raw: str) -> str:
     return name
 
 
-def create_participant(db_path: Path, raw_name: str) -> Dict:
+def create_participant(db_path: Path, raw_name: str, raw_password: str) -> Dict:
     name = normalize_name(raw_name)
+    password_hash = hash_password(normalize_password(raw_password))
     token = secrets.token_urlsafe(16)
     with connect(db_path) as conn:
         try:
             cursor = conn.execute(
-                "INSERT INTO participants (name, token, created_at) VALUES (?, ?, ?)",
-                (name, token, time.time()),
+                "INSERT INTO participants (name, token, password_hash, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (name, token, password_hash, time.time()),
             )
         except sqlite3.IntegrityError:
             raise SignupError(f"The name {name!r} is already taken.") from None
         return {"id": cursor.lastrowid, "name": name, "token": token}
+
+
+def authenticate(db_path: Path, raw_name: str, password: str) -> Optional[Dict]:
+    """Return the participant if name + password match, else None."""
+    name = " ".join(raw_name.split())
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM participants WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+    if row is None or not row["password_hash"]:
+        return None
+    if not check_password(password, row["password_hash"]):
+        return None
+    return dict(row)
 
 
 def participant_by_token(db_path: Path, token: str) -> Optional[Dict]:
