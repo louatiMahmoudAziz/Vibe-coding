@@ -2,7 +2,10 @@ PYTHON ?= python3
 TEAM ?= _template
 SCENARIO ?= balanced_commute
 
-.PHONY: test leaderboard validate evaluate watch scenarios clean
+.PHONY: test leaderboard serve validate evaluate watch scenarios clean
+
+serve:
+	$(PYTHON) -m webboard --port 8000 --data server_data
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
