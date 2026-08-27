@@ -84,6 +84,55 @@ BASE_CSS = """
   footer { margin-top: 24px; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
   footer code { color: var(--accent); }
   .empty { color: var(--muted); text-align: center; padding: 36px 0; }
+  .usermenu { position: fixed; top: 18px; right: 22px; z-index: 50; }
+  .usermenu .trigger { background: var(--panel); border: 1px solid var(--line);
+      color: var(--text); padding: 9px 16px; border-radius: 10px; font-weight: 600;
+      cursor: pointer; font-size: 14px; }
+  .usermenu .trigger:hover { background: var(--panel-2); }
+  .usermenu .chev { color: var(--muted); margin-left: 7px; font-size: 11px; }
+  .usermenu .dropdown { display: none; position: absolute; right: 0; margin-top: 8px;
+      background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+      min-width: 190px; overflow: hidden; box-shadow: 0 12px 30px #000a; }
+  .usermenu.open .dropdown { display: block; }
+  .usermenu .dropdown a { display: block; padding: 11px 16px; color: var(--text);
+      text-decoration: none; font-size: 14px; }
+  .usermenu .dropdown a:hover { background: #ffffff10; }
+  .usermenu .dropdown a.logout { color: var(--red); border-top: 1px solid var(--line); }
+"""
+
+# Renders the top-right user menu on any page when a session cookie is
+# present. Plain string (not an f-string) so the JS braces stay literal.
+USERMENU_SNIPPET = """
+<script>
+(async function () {
+  let session;
+  try {
+    session = await (await fetch("/api/session", {cache: "no-store"})).json();
+  } catch (err) { return; }
+  if (!session.authenticated) return;
+  const el = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const root = el("div", "usermenu");
+  const trigger = el("button", "trigger", session.name);
+  trigger.appendChild(el("span", "chev", "\\u25be"));
+  const dropdown = el("div", "dropdown");
+  const mine = el("a", "", "My submissions");   mine.href = "/me";
+  const board = el("a", "", "Leaderboard");     board.href = "/";
+  const logout = el("a", "logout", "Log out");  logout.href = "/logout";
+  dropdown.append(mine, board, logout);
+  root.append(trigger, dropdown);
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.classList.toggle("open");
+  });
+  document.addEventListener("click", () => root.classList.remove("open"));
+  document.body.appendChild(root);
+})();
+</script>
 """
 
 _HEADER = """
@@ -208,6 +257,7 @@ async function refresh() {{
 refresh();
 setInterval(refresh, 4000);
 </script>
+{USERMENU_SNIPPET}
 </body>
 </html>
 """
@@ -259,10 +309,11 @@ ME_HTML = f"""<!DOCTYPE html>
   <div class="card">
     <h2 id="hello">My submissions</h2>
     <div id="banner"></div>
-    <p class="hint">This is your personal upload page &mdash; bookmark it, or
-       <a href="/login">log in</a> with your name and password to get back here
-       from any device. Every upload is automatically evaluated on 5 scenarios
-       &times; 3 seeds; your best total ranks on the <a href="/">live leaderboard</a>.</p>
+    <p class="hint">This is your personal upload page. You stay signed in on
+       this device until you log out (click your name, top right); from another
+       device just <a href="/login">log in</a> again. Every upload is
+       automatically evaluated on 5 scenarios &times; 3 seeds; your best total
+       ranks on the <a href="/">live leaderboard</a>.</p>
     <form method="post" enctype="multipart/form-data" id="upload-form">
       <label>Upload your <code>policy.py</code> (must define <code>class Policy</code> with <code>decide(self, obs)</code>)</label>
       <input type="file" name="file" accept=".py,text/x-python">
@@ -342,6 +393,7 @@ async function refresh() {{
 refresh();
 setInterval(refresh, 3000);
 </script>
+{USERMENU_SNIPPET}
 </body>
 </html>
 """
