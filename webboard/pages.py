@@ -158,9 +158,9 @@ INDEX_HTML = f"""<!DOCTYPE html>
 <div class="wrap">
 {_HEADER}
   <p class="meta" id="meta">Loading&hellip;</p>
-  <p style="margin: 0 0 18px"><a class="btn" href="/signup">Join the challenge</a>
-     <a class="btn secondary" href="/login" style="margin-left:8px">Log in</a>
-     <span class="hint" style="margin-left:12px">Create an account, upload your policy as often as you like &mdash; your best score counts.</span></p>
+  <p style="margin: 0 0 18px"><a class="btn" id="cta-btn" href="/signup">Join the challenge</a>
+     <a class="btn secondary" id="login-btn" href="/login" style="margin-left:8px">Log in</a>
+     <span class="hint" id="cta-hint" style="margin-left:12px">Create an account, upload your policy as often as you like &mdash; your best score counts.</span></p>
   <table>
     <thead><tr id="head-row"></tr></thead>
     <tbody id="rows"><tr><td class="empty" id="empty-cell">Waiting for the first participant&hellip;</td></tr></tbody>
@@ -256,6 +256,21 @@ async function refresh() {{
 }}
 refresh();
 setInterval(refresh, 4000);
+
+// Signed-in visitors get a "New submission" button instead of signup/login.
+(async function () {{
+  let session;
+  try {{
+    session = await (await fetch("/api/session", {{cache: "no-store"}})).json();
+  }} catch (err) {{ return; }}
+  if (!session.authenticated) return;
+  const cta = document.getElementById("cta-btn");
+  cta.textContent = "New submission";
+  cta.href = "/me";
+  document.getElementById("login-btn").remove();
+  document.getElementById("cta-hint").textContent =
+    "Upload a new version of your policy \\u2014 your best score is what counts.";
+}})();
 </script>
 {USERMENU_SNIPPET}
 </body>
