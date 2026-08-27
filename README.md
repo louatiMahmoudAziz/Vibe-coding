@@ -89,6 +89,24 @@ the shipped baselines score **40** (fixed timer), **48** (greedy queue) and
 
 ## Leaderboard
 
+Two ways to run it, pick per venue:
+
+**Live server (signup links + upload + auto-evaluation).** Participants
+sign up with their name via a link, get a personal upload page, and every
+upload is evaluated automatically; the leaderboard updates live:
+
+```bash
+python -m webboard --port 8000 --data server_data
+# share http://<host>:8000/signup, project http://<host>:8000/
+```
+
+See [docs/SERVER_GUIDE.md](docs/SERVER_GUIDE.md) for AWS deployment,
+security notes, and hidden-seed finals via
+`scripts/export_server_submissions.py`.
+
+**Static build (PR/folder based).** Evaluate everything in `submissions/`
+and emit standalone pages:
+
 ```bash
 python scripts/build_leaderboard.py            # evaluates all of submissions/
 open results/leaderboard.html                  # project this on the big screen
@@ -107,10 +125,12 @@ traffic_sim/            simulation engine, scenarios, scoring, CLI
   metrics.py            scoring formulas
   runner.py             policy loading and evaluation harness
   cli.py                evaluate / watch / scenarios commands
+webboard/               live leaderboard server (signup, upload, auto-eval)
 submissions/            one folder per team (start from _template/)
 scripts/
   validate_submission.py   participant self-check
   build_leaderboard.py     evaluate everyone, emit JSON + MD + HTML
+  export_server_submissions.py   server uploads -> submissions/ for finals
 tests/                  engine, scoring and harness tests (unittest)
 docs/                   scoring spec, participant guide, organizer guide
 .github/workflows/      automatic evaluation of submissions on every PR

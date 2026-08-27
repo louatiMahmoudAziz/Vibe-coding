@@ -34,12 +34,16 @@ python scripts/build_leaderboard.py --seeds 9241,7717,3583 --out results_final
 
 ## Submission flow
 
-Two options, pick per venue:
+Three options, pick per venue:
 
-1. **Pull requests (recommended).** Teams PR their folder; the GitHub
-   Actions workflow runs the harness tests, validates every submission and
-   posts the standings into the job summary. Merge, rebuild, project.
-2. **Shared drive / USB sneakernet.** Drop each team's folder into
+1. **Live server (lowest friction).** Run `python -m webboard`; share the
+   signup link; participants upload from the browser and every upload is
+   evaluated automatically with the leaderboard updating live. Full setup,
+   AWS deployment and finals flow: [SERVER_GUIDE.md](SERVER_GUIDE.md).
+2. **Pull requests.** Teams PR their folder; the GitHub Actions workflow
+   runs the harness tests, validates every submission and posts the
+   standings into the job summary. Merge, rebuild, project.
+3. **Shared drive / USB sneakernet.** Drop each team's folder into
    `submissions/` and rebuild. Nothing else to configure.
 
 ## Fair play
