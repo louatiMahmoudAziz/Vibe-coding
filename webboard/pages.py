@@ -98,6 +98,34 @@ BASE_CSS = """
       text-decoration: none; font-size: 14px; }
   .usermenu .dropdown a:hover { background: #ffffff10; }
   .usermenu .dropdown a.logout { color: var(--red); border-top: 1px solid var(--line); }
+
+  /* --- AI engineer panel ------------------------------------------- */
+  .ai-head { display: flex; align-items: baseline; justify-content: space-between;
+             flex-wrap: wrap; gap: 12px; }
+  .budget { display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+            font-variant-numeric: tabular-nums; }
+  .budget .figure { font-size: 13px; color: var(--muted); }
+  .budget .figure b { color: var(--text); font-size: 15px; }
+  .budget-bar { width: 190px; height: 7px; border-radius: 4px;
+                background: #ffffff14; overflow: hidden; }
+  .budget-fill { height: 100%; width: 100%; border-radius: 4px;
+                 background: linear-gradient(90deg, #2ee6a8, #ffd166);
+                 transition: width .45s ease; }
+  .budget-fill.low  { background: linear-gradient(90deg, #ffb84d, #ff9a3d); }
+  .budget-fill.gone { background: var(--red); }
+  .ai-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+                margin-top: 14px; }
+  .ai-note { font-size: 13px; color: var(--muted); }
+  .ai-note.err { color: var(--red); }
+  .ai-note.ok  { color: var(--green); }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .spinner { width: 15px; height: 15px; border-radius: 50%; display: inline-block;
+             border: 2px solid #ffffff2e; border-top-color: var(--accent);
+             animation: spin .7s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; } .budget-fill { transition: none; }
+  }
 """
 
 # Renders the top-right user menu on any page when a session cookie is
@@ -311,6 +339,102 @@ SIGNUP_HTML = f"""<!DOCTYPE html>
 """
 
 
+AI_CARD = """
+  <div class="card">
+    <div class="ai-head">
+      <h2 style="margin:0">Your AI engineer</h2>
+      <div class="budget">
+        <div class="figure"><b id="budget-pct">--</b> of your AI budget left</div>
+        <div class="budget-bar"><div class="budget-fill" id="budget-fill"></div></div>
+        <div class="figure" id="budget-detail"></div>
+      </div>
+    </div>
+    <p class="hint">You do not write the controller - you direct the engineer that
+       writes it. Say what the policy should do and why. Whatever is in the box
+       below is sent along, so you can ask for changes to what you already have.</p>
+    <label for="prompt">Tell the AI what to build</label>
+    <textarea id="prompt" spellcheck="true" rows="5"
+      placeholder="Think about what the client actually asked for, then say what the policy must guarantee and what it should optimise."></textarea>
+    <div class="ai-actions">
+      <button class="btn" type="button" id="ask">Ask the AI</button>
+      <span class="ai-note" id="ai-note"></span>
+    </div>
+  </div>
+"""
+
+AI_SCRIPT = """
+const promptBox  = document.getElementById("prompt");
+const askBtn     = document.getElementById("ask");
+const note       = document.getElementById("ai-note");
+const codeBox    = document.querySelector("textarea[name=code]");
+const budgetPct  = document.getElementById("budget-pct");
+const budgetFill = document.getElementById("budget-fill");
+const budgetInfo = document.getElementById("budget-detail");
+
+function paintBudget(b) {
+  if (!b) return;
+  budgetPct.textContent = b.percent + "%";
+  budgetFill.style.width = Math.max(0, Math.min(100, b.percent)) + "%";
+  budgetFill.className = "budget-fill" +
+    (b.percent <= 0 ? " gone" : b.percent < 25 ? " low" : "");
+  budgetInfo.textContent =
+    b.remaining.toLocaleString() + " of " + b.granted.toLocaleString() + " tokens";
+  askBtn.disabled = b.remaining <= 0;
+  if (b.remaining <= 0) {
+    say("Your budget is spent. What you have now is what you ship.", "err");
+  }
+}
+
+function say(text, kind) {
+  note.className = "ai-note" + (kind ? " " + kind : "");
+  note.textContent = text;
+}
+
+async function loadBudget() {
+  try {
+    const r = await fetch("/api/budget", {cache: "no-store"});
+    if (r.ok) paintBudget((await r.json()).budget);
+  } catch (err) { /* the page still works without the meter */ }
+}
+
+askBtn.addEventListener("click", async () => {
+  const prompt = promptBox.value.trim();
+  if (!prompt) { say("Tell the AI what to do first.", "err"); promptBox.focus(); return; }
+
+  askBtn.disabled = true;
+  note.className = "ai-note";
+  note.innerHTML = '<span class="spinner"></span> Thinking\u2026';
+
+  let res, payload;
+  try {
+    res = await fetch("/api/generate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({prompt: prompt, code: codeBox.value || null}),
+    });
+    payload = await res.json();
+  } catch (err) {
+    askBtn.disabled = false;
+    return say("Could not reach the server. Nothing was charged.", "err");
+  }
+
+  if (payload.budget) paintBudget(payload.budget);
+  askBtn.disabled = payload.budget ? payload.budget.remaining <= 0 : false;
+
+  if (!res.ok) {
+    return say(payload.error || "The AI could not be reached.", "err");
+  }
+
+  codeBox.value = payload.code;
+  codeBox.scrollIntoView({behavior: "smooth", block: "center"});
+  const extra = payload.note ? " (" + payload.note + ")" : "";
+  say("Controller updated - " + payload.charged.toLocaleString() +
+      " tokens spent." + extra + " Read it before you submit.", "ok");
+});
+
+loadBudget();
+"""
+
 ME_HTML = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -321,6 +445,7 @@ ME_HTML = f"""<!DOCTYPE html>
 <body>
 <div class="wrap" style="max-width: 860px">
 {_HEADER}
+{AI_CARD}
   <div class="card">
     <h2 id="hello">My submissions</h2>
     <div id="banner"></div>
@@ -407,6 +532,7 @@ async function refresh() {{
 }}
 refresh();
 setInterval(refresh, 3000);
+{AI_SCRIPT}
 </script>
 {USERMENU_SNIPPET}
 </body>
