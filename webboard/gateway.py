@@ -26,6 +26,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -386,49 +387,82 @@ def _fetch_aws_secret() -> Optional[str]:
 
 
 
-def _fetch_azure_secret() -> Optional[str]:
-    """Azure Key Vault via the instance's managed identity.
+def _azure_token(resource: str = "https://vault.azure.net") -> str:
+    """Get a managed-identity token, on either App Service or a VM.
 
-    Uses the IMDS endpoint and the Key Vault REST API directly, so no azure-*
-    packages are needed - the VM's own identity is the credential. Assign the
-    VM a managed identity with 'Key Vault Secrets User' on the vault and set
-    VCC_KEYVAULT_URL + VCC_KEYVAULT_SECRET; nothing else.
+    The two hosts expose managed identity through completely different
+    endpoints, and this is not interchangeable:
+
+      * App Service / Functions / Container Apps inject IDENTITY_ENDPOINT and
+        IDENTITY_HEADER into the container. You call that local endpoint with
+        the header as a shared secret.
+      * A plain VM uses the IMDS address 169.254.169.254 with `Metadata: true`.
+
+    Trying IMDS on App Service gives "[Errno 111] Connection refused", because
+    nothing is listening there. Prefer the injected endpoint when present.
+    """
+    endpoint = os.environ.get("IDENTITY_ENDPOINT", "").strip()
+    header = os.environ.get("IDENTITY_HEADER", "").strip()
+
+    if endpoint and header:
+        url = (
+            f"{endpoint}?resource={urllib.parse.quote(resource, safe='')}"
+            f"&api-version=2019-08-01"
+        )
+        request = urllib.request.Request(url, headers={"X-IDENTITY-HEADER": header})
+        host = "App Service identity endpoint"
+    else:
+        url = (
+            "http://169.254.169.254/metadata/identity/oauth2/token"
+            f"?api-version=2018-02-01&resource={urllib.parse.quote(resource, safe='')}"
+        )
+        request = urllib.request.Request(url, headers={"Metadata": "true"})
+        host = "Azure IMDS"
+
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read().decode("utf-8"))["access_token"]
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:300]
+        raise GatewayError(
+            f"{host} returned HTTP {exc.code}: {detail}. "
+            f"Is a managed identity assigned to this app?"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise GatewayError(
+            f"could not get a managed-identity token from {host}: {exc}. "
+            f"Is a managed identity assigned to this app?"
+        ) from exc
+
+
+def _fetch_azure_secret() -> Optional[str]:
+    """Read the API key from Azure Key Vault using the host's own identity.
+
+    Uses the Key Vault REST API directly, so no azure-* packages are needed.
+    Assign the app a managed identity with 'Key Vault Secrets User' on the
+    vault and set VCC_KEYVAULT_URL + VCC_KEYVAULT_SECRET; nothing else.
     """
     vault = os.environ.get(KEYVAULT_URL_ENV, "").strip().rstrip("/")
     name = os.environ.get(KEYVAULT_SECRET_ENV, "").strip()
     if not vault or not name:
         return None
 
-    token_url = (
-        "http://169.254.169.254/metadata/identity/oauth2/token"
-        "?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net"
-    )
-    try:
-        req = urllib.request.Request(token_url, headers={"Metadata": "true"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            token = json.loads(resp.read().decode("utf-8"))["access_token"]
-    except Exception as exc:  # noqa: BLE001
-        raise GatewayError(
-            f"could not get a managed-identity token from Azure IMDS: {exc}. "
-            f"Is a managed identity assigned to this VM?"
-        ) from exc
-
+    token = _azure_token()
     secret_url = f"{vault}/secrets/{name}?api-version=7.4"
     try:
-        req = urllib.request.Request(
+        request = urllib.request.Request(
             secret_url, headers={"Authorization": f"Bearer {token}"}
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return str(json.loads(resp.read().decode("utf-8"))["value"]).strip()
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return str(json.loads(response.read().decode("utf-8"))["value"]).strip()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
         raise GatewayError(
             f"Key Vault returned HTTP {exc.code}: {detail}. "
-            f"Does the VM's identity have 'Key Vault Secrets User' on {vault}?"
+            f"Does this app's identity have 'Key Vault Secrets User' on {vault}?"
         ) from exc
     except Exception as exc:  # noqa: BLE001
         raise GatewayError(f"could not read the secret from Key Vault: {exc}") from exc
-
 
 def _api_key() -> str:
     cached = _key_cache.get("key")
