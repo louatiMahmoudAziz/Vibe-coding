@@ -1,0 +1,4 @@
+# The challenge platform is deliberately dependency-free: standard
+# library only, so it runs anywhere with Python 3.9+ and nothing to
+# install. This file exists so CI/CD build steps that expect it do
+# not fail on a missing file.

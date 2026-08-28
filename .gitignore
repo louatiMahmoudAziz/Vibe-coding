@@ -5,3 +5,6 @@ __pycache__/
 server_data/
 finals_submissions/
 results_final/
+# deployment artifacts
+app.zip
+*.sqlite3

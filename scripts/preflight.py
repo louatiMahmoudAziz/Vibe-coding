@@ -100,9 +100,12 @@ def c_key():
     if source == "unset":
         raise RuntimeError("no key configured (GEMINI_API_KEY / VCC_SECRET_ID / VCC_SSM_PARAM)")
     key = gateway._api_key()
-    if not key.startswith("AIza"):
-        raise RuntimeError("key resolved but does not look like a Gemini key")
-    return f"{source}  ->  {key[:4]}...{key[-4:]}"
+    # Google issues both the legacy "AIza..." keys and the newer "AQ." format.
+    # Don't gate on a prefix - a real generation is the only honest check, and
+    # c_generation() below does exactly that.
+    if len(key) < 20:
+        raise RuntimeError("key resolved but is implausibly short")
+    return f"{source}  ->  {key[:3]}...{key[-4:]} ({len(key)} chars)"
 
 
 def c_generation():
