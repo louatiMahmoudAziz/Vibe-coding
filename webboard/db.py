@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import sqlite3
@@ -50,10 +51,28 @@ class SignupError(ValueError):
     pass
 
 
+def _journal_mode() -> str:
+    """WAL locally; DELETE on App Service.
+
+    App Service mounts /home over SMB. SQLite's WAL mode needs to mmap a
+    shared-memory (-shm) file, which network filesystems do not support,
+    and SMB's advisory locking is unreliable. DELETE journaling is the
+    mode SQLite supports on network storage. Override with
+    VCC_SQLITE_JOURNAL if you know better than this heuristic.
+    """
+    explicit = os.environ.get("VCC_SQLITE_JOURNAL", "").strip().upper()
+    if explicit:
+        return explicit
+    if os.environ.get("WEBSITE_INSTANCE_ID"):   # set by App Service
+        return "DELETE"
+    return "WAL"
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=15)
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(f"PRAGMA journal_mode={_journal_mode()}")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 

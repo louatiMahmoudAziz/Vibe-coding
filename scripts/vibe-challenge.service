@@ -1,0 +1,25 @@
+# /etc/systemd/system/vibe-challenge.service
+# The workshop must survive you closing your laptop lid.
+[Unit]
+Description=Vibe Coding Challenge leaderboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/vibe-challenge
+Environment="VCC_MODEL=gemini-2.5-flash"
+Environment="VCC_SECRET_ID=vibe-challenge/gemini"
+Environment="AWS_REGION=eu-west-1"
+Environment="VCC_BUDGET_TOKENS=35000"
+Environment="VCC_MAX_CONCURRENT=8"
+Environment="VCC_TARGET_RPM=800"
+ExecStart=/usr/bin/python3 -m webboard --port 8000 --data /opt/vibe-challenge/server_data
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
