@@ -1,5 +1,16 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
+# Deploy the challenge platform to Azure App Service on every push to main.
+#
+# There is deliberately no build step. The platform is standard-library only:
+# nothing to pip install, nothing to compile. Azure's generated workflow used
+# azure/appservice-build@v2, which runs Microsoft's Oryx builder inside a 2020
+# container whose glibc cannot execute a Python 3.11 binary:
+#
+#   python3.11: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.29' not found
+#
+# Since there are no dependencies to install, the correct fix is to drop the
+# step rather than work around it. If this project ever grows real
+# dependencies, add a `pip install --target=.python_packages/lib/site-packages`
+# step here instead of reinstating Oryx.
 
 name: 'Build and deploy Python app to Azure Web App: vibe-board-5591'
 
@@ -12,24 +23,30 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v2
 
-    - name: Set up Python version
-      uses: actions/setup-python@v1
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    
-    - name: Build using AppService-Build
-      uses: azure/appservice-build@v2
-      with:
-        platform: python
-        platform-version: '3.11'
-    
+
+    - name: Sanity check - everything imports and the suite passes
+      run: |
+        python -m compileall -q webboard traffic_sim scripts
+        python -m unittest discover -s tests -q
+
+    - name: Package for deployment
+      run: |
+        zip -qr release.zip . \
+          -x '.git/*' '.github/*' '__pycache__/*' '*/__pycache__/*' \
+             'server_data/*' 'app.zip' '*.sqlite3'
+
     - name: 'Deploy to Azure Web App'
-      uses: azure/webapps-deploy@v2
-      with: 
+      uses: azure/webapps-deploy@v3
+      with:
         app-name: 'vibe-board-5591'
         slot-name: 'production'
         publish-profile: ${{ secrets.AzureAppService_PublishProfile_4f0760c014b24e35afb16e0e1d442b40 }}
+        package: release.zip
