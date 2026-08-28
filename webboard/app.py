@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from traffic_sim.scenarios import DEFAULT_SEEDS, SCENARIOS
 
-from . import db, pages
+from . import db, gateway, pages
 from .evaluator import Evaluator
 
 MAX_UPLOAD_BYTES = 200_000
@@ -53,6 +53,7 @@ class BoardServer(ThreadingHTTPServer):
         self.db_path = self.data_dir / "board.sqlite3"
         self.seeds = tuple(seeds) if seeds else DEFAULT_SEEDS
         db.init(self.db_path)
+        gateway.ensure_schema(self.db_path)
         repo_root = Path(__file__).resolve().parent.parent
         self.evaluator = Evaluator(self.db_path, repo_root, self.seeds)
         requeued = self.evaluator.requeue_unfinished()
@@ -162,7 +163,16 @@ class BoardHandler(BaseHTTPRequestHandler):
         if path == "/logout":
             return self._redirect("/", set_cookie=self._logout_cookie())
         if path == "/health":
-            return self._json({"ok": True, "backlog": self.server.evaluator.backlog})
+            return self._json(
+                {
+                    "ok": True,
+                    "backlog": self.server.evaluator.backlog,
+                    "model": gateway.MODEL,
+                    "temperature": gateway.TEMPERATURE,
+                    "key_source": gateway.key_source(),
+                    "ai_queue_depth": gateway.queue_depth(),
+                }
+            )
         if path == "/api/session":
             person = self._session_participant()
             if person:
@@ -172,6 +182,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._json({"authenticated": False})
         if path == "/api/leaderboard":
             return self._api_leaderboard()
+        if path == "/api/budget":
+            return self._api_budget()
         parts = [p for p in path.split("/") if p]
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "participant":
             return self._api_participant(parts[2])
@@ -190,7 +202,13 @@ class BoardHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
         except ValueError as exc:
+            if path.startswith("/api/"):
+                return self._json({"error": str(exc)}, status=413)
             return self._html(pages.signup_page(str(exc)), status=413)
+
+        # JSON endpoint: handled before the form parser touches the body.
+        if path == "/api/generate":
+            return self._api_generate(body)
         fields = parse_form(self.headers.get("Content-Type", ""), body)
 
         if path == "/signup":
@@ -203,6 +221,73 @@ class BoardHandler(BaseHTTPRequestHandler):
         self._html(pages.NOT_FOUND_HTML, status=404)
 
     # -- handlers -----------------------------------------------------------
+
+    # -- AI gateway ---------------------------------------------------------
+
+    def _api_budget(self) -> None:
+        """How much AI budget this participant has left."""
+        person = self._session_participant()
+        if person is None:
+            return self._json({"error": "not signed in"}, status=401)
+        return self._json(
+            {
+                "budget": gateway.budget_state(self.server.db_path, person["id"]),
+                "queue_depth": gateway.queue_depth(),
+            }
+        )
+
+    def _api_generate(self, body: bytes) -> None:
+        """Spend AI budget to produce a controller.
+
+        The only route from a participant to the model. Authenticated by
+        the session cookie, metered by the gateway, and rate-shaped so a
+        room full of people submitting at once does not trip the provider's
+        limits. The API key never leaves the server.
+        """
+        person = self._session_participant()
+        if person is None:
+            return self._json({"error": "Sign in first."}, status=401)
+
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            return self._json({"error": "Body must be JSON."}, status=400)
+        if not isinstance(payload, dict):
+            return self._json({"error": "Body must be a JSON object."}, status=400)
+
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            return self._json({"error": "Tell the AI what to do."}, status=400)
+        current_code = payload.get("code") or None
+
+        def budget():
+            return gateway.budget_state(self.server.db_path, person["id"])
+
+        try:
+            generation = gateway.generate(
+                self.server.db_path, person["id"], prompt, current_code
+            )
+        except gateway.BudgetExhausted:
+            return self._json(
+                {
+                    "error": "Your AI budget is spent. What you have now is what you ship.",
+                    "budget": budget(),
+                },
+                status=402,
+            )
+        except gateway.GatewayError as exc:
+            # Upstream trouble is never charged to the participant.
+            return self._json({"error": str(exc), "budget": budget()}, status=502)
+
+        return self._json(
+            {
+                "code": generation.code,
+                "charged": generation.charged,
+                "attempts": generation.attempts,
+                "note": generation.note,
+                "budget": budget(),
+            }
+        )
 
     def _post_signup(self, fields: Dict[str, bytes]) -> None:
         raw_name = fields.get("name", b"").decode("utf-8", "replace")
