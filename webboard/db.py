@@ -38,7 +38,13 @@ CREATE TABLE IF NOT EXISTS submissions (
     mean_avg_wait REAL,
     detail_json TEXT,
     error TEXT,
-    code_path TEXT
+    code_path TEXT,
+    act TEXT NOT NULL DEFAULT 'act1'
+);
+
+CREATE TABLE IF NOT EXISTS board_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_submissions_participant
     ON submissions (participant_id, created_at);
@@ -81,6 +87,10 @@ def init(db_path: Path) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        # A database created before acts existed has no act column.
+        columns = {row[1] for row in conn.execute('PRAGMA table_info(submissions)')}
+        if "act" not in columns:
+            conn.execute("ALTER TABLE submissions ADD COLUMN act TEXT NOT NULL DEFAULT 'act1'")
         # Migration for databases created before accounts had passwords.
         columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(participants)")
@@ -169,11 +179,56 @@ def participant_by_token(db_path: Path, token: str) -> Optional[Dict]:
         return dict(row) if row else None
 
 
-def create_submission(db_path: Path, participant_id: int) -> int:
+
+# --------------------------------------------------------------------------- #
+# Which act the room is in
+#
+# One value, shared by everybody. The organiser advances it and every
+# participant moves at the same moment -- individual unlocking would let the
+# fast third run ahead and lose the collective reveal, which is most of what
+# the second act is for.
+# --------------------------------------------------------------------------- #
+
+ACTS = ("act1", "act2", "deployment")
+
+
+def current_act(db_path: Path) -> str:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM board_state WHERE key = 'act'"
+        ).fetchone()
+    act = row["value"] if row else "act1"
+    return act if act in ACTS else "act1"
+
+
+def set_current_act(db_path: Path, act: str) -> str:
+    if act not in ACTS:
+        raise ValueError(f"unknown act {act!r}")
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO board_state (key, value) VALUES ('act', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (act,),
+        )
+    return act
+
+
+def submissions_in_act(db_path: Path, participant_id: int, act: str) -> List[Dict]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM submissions WHERE participant_id = ? AND act = ? "
+            "ORDER BY created_at DESC",
+            (participant_id, act),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def create_submission(db_path: Path, participant_id: int, act: str = "act1") -> int:
     with connect(db_path) as conn:
         cursor = conn.execute(
-            "INSERT INTO submissions (participant_id, created_at) VALUES (?, ?)",
-            (participant_id, time.time()),
+            "INSERT INTO submissions (participant_id, created_at, act) "
+            "VALUES (?, ?, ?)",
+            (participant_id, time.time(), act),
         )
         return cursor.lastrowid
 

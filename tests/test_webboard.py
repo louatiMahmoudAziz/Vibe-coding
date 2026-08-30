@@ -257,8 +257,11 @@ class TestServerEndToEnd(unittest.TestCase):
         self.assertEqual(entry["name"], "The Testers")
         self.assertEqual(entry["latest_status"], "scored")
         self.assertGreater(entry["best_score"], 20.0)
-        # six traces now: the two acts plus four deployment sites
-        self.assertEqual(len(entry["scenario_scores"]), 6)
+        # The room starts on Act 1, which scores one trace. Later acts add
+        # their own and keep every earlier one, so a fix that breaks the
+        # pilot shows up as breaking the pilot.
+        self.assertEqual(len(entry["scenario_scores"]), 1)
+        self.assertIn("pilot_morning", entry["scenario_scores"])
 
         # 5. Personal API shows the submission history.
         with urllib.request.urlopen(

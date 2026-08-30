@@ -43,7 +43,9 @@ def cmd_evaluate(args) -> int:
         print(f"available: {', '.join(SCENARIOS)}", file=sys.stderr)
         return 2
 
-    result = evaluate_submission(Path(args.policy), scenario_names, seeds)
+    result = evaluate_submission(
+        Path(args.policy), scenario_names, seeds, act=getattr(args, "act", None)
+    )
 
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
@@ -133,6 +135,10 @@ def main(argv=None) -> int:
     evaluate.add_argument("--scenario", help="run a single scenario")
     evaluate.add_argument("--seeds", help="comma-separated seeds (default: public seeds)")
     evaluate.add_argument("--json", action="store_true", help="emit JSON")
+    evaluate.add_argument(
+        "--act", choices=("act1", "act2", "deployment"),
+        help="score only this act's traces (plus every earlier act's)",
+    )
 
     watch = sub.add_parser("watch", help="replay one run with ASCII queue bars")
     watch.add_argument("policy", help="path to a policy.py")

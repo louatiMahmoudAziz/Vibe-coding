@@ -165,6 +165,26 @@ BASE_CSS = """
   .vr.pass .out { color: var(--green); }
   .vr.fail .out { color: var(--red); }
   .vr .dot { width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+
+  /* --- act board ---------------------------------------------------- */
+  .acts { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+  @media (max-width: 700px) { .acts { grid-template-columns: minmax(0,1fr); } }
+  .act { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+         padding: 15px 16px; display: flex; flex-direction: column; gap: 7px;
+         transition: border-color .3s ease, opacity .3s ease; }
+  .act.locked { opacity: .42; }
+  .act.live { border-color: var(--accent); background: #ffd1660f; }
+  .act.done { border-color: var(--green); }
+  .act .tag { font-family: ui-monospace, monospace; font-size: 10px; letter-spacing: .14em;
+              text-transform: uppercase; color: var(--muted); }
+  .act.live .tag { color: var(--accent); }
+  .act.done .tag { color: var(--green); }
+  .act h3 { margin: 0; font-size: 15.5px; }
+  .act p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+  .act .client { border-left: 2px solid var(--line); padding-left: 11px;
+                 font-style: italic; color: var(--text); }
+  .act.locked .client { display: none; }
+  @media (prefers-reduced-motion: reduce) { .act { transition: none; } }
 """
 
 # Renders the top-right user menu on any page when a session cookie is
@@ -666,6 +686,74 @@ function offerReplay(sub) {
 }
 """
 
+ACT_BOARD = """
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap">
+      <h2 style="margin:0">The contract</h2>
+      <span class="hint" id="act-clock">&nbsp;</span>
+    </div>
+    <div class="acts" id="act-board"></div>
+  </div>
+"""
+
+ACT_SCRIPT = """
+const ACT_COPY = [
+  ["act1", "Act 1 — The pilot", "Monday, 6:40 a.m.",
+   "Keep traffic moving and do not leave people sitting there. Switching the lights costs a few seconds each time."],
+  ["act2", "Act 2 — The dashboard was fine", "Thursday, 4:15 p.m.",
+   "Your numbers look great. Eleven complaints from one block — people turning left sit through six cycles. Nobody waits over 140 seconds. Ever. And the morning traffic still counts."],
+  ["deployment", "Act 3 — Eight hundred intersections", "Six weeks later",
+   "The pilot cleared review. Your controller ships as-is to every intersection in the program. There is no per-site tuning in this contract."],
+];
+
+let shownAct = null;
+
+async function paintActs() {
+  let cur = "act1";
+  try {
+    cur = (await (await fetch("/api/act", {cache: "no-store"})).json()).act;
+  } catch (err) { return; }
+
+  const board = document.getElementById("act-board");
+  if (cur === shownAct && board.children.length) return;
+  const advanced = shownAct !== null && cur !== shownAct;
+  shownAct = cur;
+
+  const idx = ACT_COPY.findIndex(a => a[0] === cur);
+  board.replaceChildren();
+  ACT_COPY.forEach(function (a, i) {
+    const card = document.createElement("div");
+    card.className = "act " + (i < idx ? "done" : i === idx ? "live" : "locked");
+    const tag = document.createElement("div");
+    tag.className = "tag";
+    tag.textContent = (i > idx ? "locked" : i === idx ? "now" : "done") + " · " + a[2];
+    const h = document.createElement("h3");
+    h.textContent = i > idx ? "Not yet" : a[1];
+    const p = document.createElement("p");
+    p.className = "client";
+    p.textContent = a[3];
+    card.appendChild(tag); card.appendChild(h); card.appendChild(p);
+    board.appendChild(card);
+  });
+
+  const frozen = cur === "deployment";
+  document.getElementById("act-clock").textContent = frozen
+    ? "AI access is closed. Your last submission is what ships."
+    : "Scored on this act's traffic plus every earlier act's.";
+  if (typeof askBtn !== "undefined" && askBtn) askBtn.disabled = frozen;
+  if (typeof buildBtn !== "undefined" && buildBtn) buildBtn.disabled = frozen;
+
+  if (advanced && typeof say === "function") {
+    say(frozen
+      ? "The city exercised the rollout option. No more generations."
+      : "The client has been in touch - read the contract above.", "ok");
+  }
+}
+
+paintActs();
+setInterval(paintActs, 4000);
+"""
+
 ME_HTML = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -676,6 +764,7 @@ ME_HTML = f"""<!DOCTYPE html>
 <body>
 <div class="wrap" style="max-width: 860px">
 {_HEADER}
+{ACT_BOARD}
 {AI_CARD}
 {REPLAY_CARD}
   <div class="card">
@@ -768,6 +857,7 @@ refresh();
 setInterval(refresh, 3000);
 {AI_SCRIPT}
 {REPLAY_SCRIPT}
+{ACT_SCRIPT}
 </script>
 {USERMENU_SNIPPET}
 </body>
@@ -816,6 +906,111 @@ NOT_FOUND_HTML = f"""<!DOCTYPE html>
 Go back to the <a href="/">leaderboard</a> or <a href="/signup">sign up</a>.</p></div>
 </div></body></html>
 """
+
+
+
+CONTROL_HTML = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run the room - Traffic Flow Challenge</title>
+<style>{BASE_CSS}
+  .act-btn {{ display: block; width: 100%; text-align: left; margin-bottom: 10px;
+             background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+             padding: 16px 18px; border-radius: 12px; cursor: pointer; font: inherit; }}
+  .act-btn:hover {{ border-color: var(--accent); }}
+  .act-btn[aria-current="true"] {{ border-color: var(--accent); background: #ffd1661a; }}
+  .act-btn b {{ display: block; font-size: 16px; margin-bottom: 3px; }}
+  .act-btn span {{ color: var(--muted); font-size: 13.5px; }}
+  .act-btn .now {{ color: var(--accent); font-weight: 700; font-size: 12px;
+                   letter-spacing: .1em; text-transform: uppercase; }}
+  input[type=password] {{ width: 100%; background: #0a0f1e; color: var(--text);
+    border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
+    font-family: ui-monospace, monospace; font-size: 14px; }}
+</style>
+</head>
+<body>
+<div class="wrap" style="max-width: 620px">
+{_HEADER}
+  <div class="card">
+    <h2>Run the room</h2>
+    <p class="hint">Everyone moves together. Advancing the act changes what every
+       participant's next submission is scored against, and unlocks the client's
+       message on their page.</p>
+    <div id="banner"></div>
+    <label for="pw">Organiser password</label>
+    <input type="password" id="pw" autocomplete="current-password"
+           placeholder="VCC_ADMIN_PASSWORD">
+    <div style="margin-top:18px" id="acts"></div>
+  </div>
+</div>
+<script>
+const ACTS = [
+  ["act1", "Act 1 - The pilot",
+   "Monday morning. Moderate traffic. A lazy prompt passes, and it should."],
+  ["act2", "Act 2 - The dashboard was fine",
+   "The 311 complaints land. Nobody may wait over 140s - and Act 1 still counts."],
+  ["deployment", "Act 3 - Eight hundred intersections",
+   "Freeze the code. Four sites nobody has seen. Close the AI budget."],
+];
+
+function banner(text, kind) {{
+  const b = document.createElement("div");
+  b.className = "msg " + kind;
+  b.textContent = text;
+  document.getElementById("banner").replaceChildren(b);
+}}
+
+async function paint() {{
+  let cur = "act1";
+  try {{
+    cur = (await (await fetch("/api/act", {{cache: "no-store"}})).json()).act;
+  }} catch (err) {{ /* show the buttons anyway */ }}
+  const box = document.getElementById("acts");
+  box.replaceChildren();
+  ACTS.forEach(function (a) {{
+    const btn = document.createElement("button");
+    btn.className = "act-btn";
+    btn.type = "button";
+    btn.setAttribute("aria-current", a[0] === cur ? "true" : "false");
+    const t = document.createElement("b"); t.textContent = a[1];
+    const d = document.createElement("span"); d.textContent = a[2];
+    btn.appendChild(t); btn.appendChild(d);
+    if (a[0] === cur) {{
+      const n = document.createElement("div");
+      n.className = "now"; n.textContent = "Live now";
+      btn.appendChild(n);
+    }}
+    btn.addEventListener("click", function () {{ advance(a[0], a[1]); }});
+    box.appendChild(btn);
+  }});
+}}
+
+async function advance(act, label) {{
+  const pw = document.getElementById("pw").value;
+  if (!pw) {{ banner("Enter the organiser password first.", "err"); return; }}
+  const body = new URLSearchParams({{act: act, password: pw}});
+  const res = await fetch("/admin/act", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/x-www-form-urlencoded"}},
+    body: body.toString(),
+  }});
+  const payload = await res.json();
+  if (!res.ok) {{ banner(payload.error || "Could not advance.", "err"); return; }}
+  banner("The room is now on " + label + ".", "ok");
+  paint();
+}}
+
+paint();
+setInterval(paint, 5000);
+</script>
+</body>
+</html>
+"""
+
+
+def control_page() -> str:
+    return CONTROL_HTML
 
 
 def signup_page(error: str = "") -> str:

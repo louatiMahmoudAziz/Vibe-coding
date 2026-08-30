@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import time
 from email.parser import BytesParser
@@ -17,6 +18,13 @@ from traffic_sim.scenarios import DEFAULT_SEEDS, SCENARIOS
 
 from . import db, gateway, pages
 from .evaluator import Evaluator
+
+import os
+
+# The organiser advances the room through the acts. Set VCC_ADMIN_PASSWORD
+# in the server environment; without it the control is disabled entirely
+# rather than open, so a misconfigured deploy cannot be driven by a guest.
+ADMIN_PASSWORD = os.environ.get("VCC_ADMIN_PASSWORD", "").strip()
 
 MAX_UPLOAD_BYTES = 200_000
 UPLOAD_COOLDOWN_S = 15
@@ -185,6 +193,15 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._json({"authenticated": False})
         if path == "/api/leaderboard":
             return self._api_leaderboard()
+        if path == "/api/act":
+            return self._json(
+                {
+                    "act": db.current_act(self.server.db_path),
+                    "acts": list(db.ACTS),
+                }
+            )
+        if path == "/control":
+            return self._html(pages.control_page())
         if path == "/api/budget":
             return self._api_budget()
         parts = [p for p in path.split("/") if p]
@@ -212,6 +229,8 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._html(pages.signup_page(str(exc)), status=413)
 
         # JSON endpoint: handled before the form parser touches the body.
+        if path == "/admin/act":
+            return self._post_admin_act(body)
         if path == "/api/generate":
             return self._api_generate(body)
         fields = parse_form(self.headers.get("Content-Type", ""), body)
@@ -253,6 +272,28 @@ class BoardHandler(BaseHTTPRequestHandler):
             return self._json({"error": f"Could not replay: {exc}"}, status=500)
         return self._json(payload)
 
+
+    def _post_admin_act(self, body: bytes) -> None:
+        """Advance the whole room to a new act.
+
+        Everyone moves together on purpose. Unlocking per participant would
+        let the fast third reach the complaint while the rest are still on
+        the pilot, and the shared reaction is most of what Act 2 is for.
+        """
+        if not ADMIN_PASSWORD:
+            return self._json(
+                {"error": "No organiser password set on the server."}, status=503
+            )
+        fields = parse_form(self.headers.get("Content-Type", ""), body)
+        given = fields.get("password", b"").decode("utf-8", "replace")
+        act = fields.get("act", b"").decode("utf-8", "replace").strip()
+        if not hmac.compare_digest(given, ADMIN_PASSWORD):
+            return self._json({"error": "Wrong password."}, status=403)
+        try:
+            db.set_current_act(self.server.db_path, act)
+        except ValueError as exc:
+            return self._json({"error": str(exc)}, status=400)
+        return self._json({"act": act, "ok": True})
     # -- AI gateway ---------------------------------------------------------
 
     def _api_budget(self) -> None:
@@ -386,7 +427,9 @@ class BoardHandler(BaseHTTPRequestHandler):
         if "class Policy" not in text:
             return bounce("Your code must define `class Policy` (see the template).")
 
-        submission_id = db.create_submission(self.server.db_path, person["id"])
+        submission_id = db.create_submission(
+            self.server.db_path, person["id"], db.current_act(self.server.db_path)
+        )
         code_dir = self.server.uploads_dir / f"p{person['id']:04d}"
         code_dir.mkdir(parents=True, exist_ok=True)
         code_path = code_dir / f"s{submission_id:05d}.py"

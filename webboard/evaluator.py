@@ -92,6 +92,13 @@ class Evaluator(threading.Thread):
         if self.seeds:
             command += ["--seeds", ",".join(map(str, self.seeds))]
 
+        # Score against the act the submission was made in, not whatever act
+        # the room has since advanced to -- otherwise a late-finishing Act 1
+        # evaluation would be judged by Act 2's requirements.
+        act = record["act"] if "act" in record.keys() else None
+        if act:
+            command += ["--act", act]
+
         try:
             completed = subprocess.run(
                 command,
