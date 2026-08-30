@@ -1,27 +1,15 @@
-"""Demo baseline: classic fixed-time signal plan.
+"""Demo baseline: a dumb clock. Thirty seconds each way, forever.
 
-A pre-timed controller like a 1970s traffic light: long greens for the
-through movements, short greens for the protected lefts, no reaction to
-demand whatsoever. Solid on balanced traffic, poor at night and in surges.
+It ignores traffic completely, which makes it a useful yardstick: any
+controller that cannot beat a fixed timer is not doing anything useful.
+It survives the pilot and both complaints, then falls apart on deployment
+traces whose demand is nothing like the pilot's.
 """
 
-TEAM_NAME = "Baseline: Fixed Timer"
-
-# (phase, green seconds) - a fixed cycle, repeated forever.
-PLAN = (
-    ("NS_STRAIGHT", 24),
-    ("NS_LEFT", 10),
-    ("EW_STRAIGHT", 24),
-    ("EW_LEFT", 10),
-)
-CYCLE = sum(duration for _, duration in PLAN)
+OTHER = {"NS_GREEN": "EW_GREEN", "EW_GREEN": "NS_GREEN"}
+SPAN = 30
 
 
 class Policy:
-    def decide(self, obs) -> str:
-        tick = obs.time % CYCLE
-        for phase, duration in PLAN:
-            if tick < duration:
-                return phase
-            tick -= duration
-        return PLAN[0][0]
+    def decide(self, obs):
+        return obs.phase if obs.phase_elapsed < SPAN else OTHER[obs.phase]

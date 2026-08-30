@@ -86,7 +86,7 @@ MAX_QUEUE_WAIT_S = 120    # give up rather than leave someone spinning forever
 # Retries that cost the participant nothing.
 FREE_RETRIES = 2
 
-PHASES = ("NS_STRAIGHT", "NS_LEFT", "EW_STRAIGHT", "EW_LEFT")
+PHASES = ("NS_GREEN", "EW_GREEN")
 
 SYSTEM_INSTRUCTION = """\
 You write traffic-signal control policies in Python for a discrete-time \
@@ -96,10 +96,8 @@ Contract — your output MUST be a single ```python block containing a class \
 named `Policy` with a method `decide(self, obs)`. It is called once per \
 simulated second and must return one of these strings:
 
-    "NS_STRAIGHT"   opens lanes N_straight and S_straight
-    "NS_LEFT"       opens lanes N_left     and S_left
-    "EW_STRAIGHT"   opens lanes E_straight and W_straight
-    "EW_LEFT"       opens lanes E_left     and W_left
+    "NS_GREEN"   green for north and south, red for east and west
+    "EW_GREEN"   green for east and west, red for north and south
 
 Returning the current phase (or None) holds the light. The engine enforces \
 safety: a green is held at least `obs.min_green` seconds, and every change \
@@ -122,8 +120,7 @@ The `obs` object each tick:
     obs.served_total        int, vehicles that have crossed so far
     obs.min_green, obs.yellow, obs.all_red, obs.phases
 
-Lane names are exactly: N_straight, N_left, S_straight, S_left, \
-E_straight, E_left, W_straight, W_left.
+Approach names are exactly: north, south, east, west.
 
 Rules for your output:
 * No imports. No file, network, or system access. Pure computation only.
@@ -141,18 +138,18 @@ You answer questions.
 
 What the engineer is working with:
 
-  One four-way intersection, eight lanes: a straight lane and a protected left
-  lane on each approach. Four non-conflicting phases, exactly one green at a
-  time: NS_STRAIGHT, NS_LEFT, EW_STRAIGHT, EW_LEFT.
+  One four-way intersection with four approaches: north, south, east, west.
+  Two phases, exactly one green at a time: NS_GREEN (north and south move) or
+  EW_GREEN (east and west move). One road goes or the other does.
 
-  Their controller is called once per simulated second and returns the phase it
-  wants green. It can see, per lane, the queue length and how long the front
-  vehicle has waited. It cannot see future arrivals, other intersections, or
+  Their controller is called once per simulated second and returns which phase
+  it wants green. It can see, per approach, the queue length and how long the
+  front vehicle has waited. It cannot see future arrivals, other intersections, or
   which traffic pattern it is running against.
 
   A green must hold 6 seconds before it may change. Every change costs 3 s of
   yellow plus 1 s of all-red, and 2 s of startup lost time after the new green -
-  six seconds in which no vehicle moves. An open lane discharges one vehicle
+  six seconds in which no vehicle moves. An open approach discharges one vehicle
   every two seconds.
 
 Answer in plain prose. Be concrete and short - under 200 words unless the

@@ -18,7 +18,7 @@ class RoundRobinPolicy:
     """Rotate phases on a fixed 20 s cadence."""
 
     def decide(self, obs):
-        return obs.phases[(obs.time // 20) % 4]
+        return obs.phases[(obs.time // 20) % len(obs.phases)]
 
 
 class ThrashingPolicy:
@@ -26,7 +26,7 @@ class ThrashingPolicy:
 
     def decide(self, obs):
         current = obs.phases.index(obs.phase)
-        return obs.phases[(current + 1) % 4]
+        return obs.phases[(current + 1) % len(obs.phases)]
 
 
 class InvalidReturnPolicy:
@@ -86,7 +86,7 @@ class TestSafetyInterlocks(unittest.TestCase):
         self.assertTrue(all(s == YELLOW + ALL_RED for s in streaks))
 
     def test_no_departures_during_transition(self):
-        states = self._timeline(ThrashingPolicy(), "complaint_evening")
+        states = self._timeline(ThrashingPolicy(), "side_street")
         for state in states:
             if state.in_transition:
                 self.assertEqual(state.departures, 0)
@@ -98,7 +98,7 @@ class TestSafetyInterlocks(unittest.TestCase):
 
 class TestFlowConservation(unittest.TestCase):
     def test_served_never_exceeds_arrived_and_waits_nonnegative(self):
-        result = Simulation(SCENARIOS["complaint_evening"], 5).run(RoundRobinPolicy())
+        result = Simulation(SCENARIOS["side_street"], 5).run(RoundRobinPolicy())
         served = [v for v in result.vehicles if v.served]
         self.assertLessEqual(len(served), len(result.vehicles))
         for vehicle in served:
@@ -107,7 +107,7 @@ class TestFlowConservation(unittest.TestCase):
     def test_saturation_flow_upper_bound(self):
         """A lane can never discharge more than 1 vehicle per 2 seconds of green."""
         result = Simulation(SCENARIOS["deploy_reversal"], 3).run(StayPutPolicy())
-        # StayPut keeps NS_STRAIGHT green for the whole 1200 s horizon:
+        # StayPut keeps NS_GREEN green for the whole 1200 s horizon:
         # per-lane cap is (1200 - startup) * 0.5, two open lanes total.
         served = sum(1 for v in result.vehicles if v.served)
         self.assertLessEqual(served, 2 * (SCENARIOS["deploy_reversal"].horizon // 2))
@@ -116,7 +116,7 @@ class TestFlowConservation(unittest.TestCase):
         result = Simulation(SCENARIOS["pilot_morning"], 9).run(StayPutPolicy())
         for vehicle in result.vehicles:
             if vehicle.served:
-                self.assertIn(vehicle.lane, ("N_straight", "S_straight"))
+                self.assertIn(vehicle.lane, ("north", "south"))
 
 
 class TestScenarios(unittest.TestCase):
@@ -137,7 +137,7 @@ class TestScenarios(unittest.TestCase):
     def test_phase_names_stable(self):
         # Participants' policies hardcode these names; never rename silently.
         self.assertEqual(
-            PHASES, ("NS_STRAIGHT", "NS_LEFT", "EW_STRAIGHT", "EW_LEFT")
+            PHASES, ("NS_GREEN", "EW_GREEN")
         )
 
 

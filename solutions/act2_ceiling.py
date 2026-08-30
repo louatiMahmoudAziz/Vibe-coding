@@ -1,95 +1,41 @@
-"""ACT 2 SOLVER - a ceiling that outranks the margin, and greens long enough to be worth taking.
+"""Reference solver, Acts 2 and 3: bound the worst case, then optimise.
 
-The Act 1 controller was not broken. Its idea of "which phase needs the green"
-counted cars and never counted time, so a small queue could sit indefinitely.
-The obvious fix - a hard ceiling on waiting - is necessary but not sufficient,
-and the reason is the part worth understanding.
+Three rules, and the ORDER MATTERS.
 
-Every switch costs six seconds in which nothing moves. A controller that reacts
-to every ceiling breach switches constantly and loses a third of the clock to
-yellow lights; it stops stranding anybody and starts failing throughput and
-average wait instead. Measured: a naive ceiling at 55s produced 57 switches in
-a 600-second run - 342 seconds of dead time.
+  1. Ceiling first. If anyone on the red road has waited MAX_WAIT seconds,
+     switch -- regardless of queue lengths. This is what the side street
+     needs, and it is why a queue comparison alone can never be enough.
+  2. But not before MIN_SERVE seconds of green. Without this the ceiling
+     itself causes thrashing, and thrashing fails throughput. The two
+     numbers are a pair; neither works alone.
+  3. Otherwise compare queues with a margin, so the light does not flip
+     over a one-car difference that is not worth six seconds of dead time.
 
-So this policy has two ideas, and needs both:
-
-  1. A ceiling that is checked FIRST, before any pressure comparison. If a
-     phase has somebody over MAX_WAIT it gets the green next, full stop. Put
-     this check after the pressure logic and the switching margin swallows it.
-
-  2. A green worth taking. Once a phase is green it keeps it until it has
-     actually drained, or MIN_SERVE seconds have passed - so the six seconds
-     spent getting there buy something.
-
-The two pull against each other. That tension is the problem.
+Measured:  ACT 1 pass  |  ACT 2 pass  |  DEPLOYMENT pass (all 7 traces)
 """
 
-TEAM_NAME = "Reference: Act 2"
+OTHER = {"NS_GREEN": "EW_GREEN", "EW_GREEN": "NS_GREEN"}
+LANES = {"NS_GREEN": ("north", "south"), "EW_GREEN": ("east", "west")}
 
-PHASE_LANES = {
-    "NS_STRAIGHT": ("N_straight", "S_straight"),
-    "NS_LEFT": ("N_left", "S_left"),
-    "EW_STRAIGHT": ("E_straight", "W_straight"),
-    "EW_LEFT": ("E_left", "W_left"),
-}
-
-MAX_WAIT = 95        # hard ceiling; the requirement is 140s, leave room to be served
-MIN_SERVE = 18       # keep a green at least this long, so the switch cost buys something
-AGE_WEIGHT = 0.5     # a second of waiting is worth this much of a queued car
-SWITCH_MARGIN = 4    # how much better a rival must look before paying six seconds
-
-
-def _queue(obs, phase):
-    return sum(obs.queues[lane] for lane in PHASE_LANES[phase])
-
-
-def _oldest(obs, phase):
-    return max(obs.oldest_wait[lane] for lane in PHASE_LANES[phase])
+MAX_WAIT = 70      # nobody on red waits longer than this
+MIN_SERVE = 16     # ...but give the green road at least this long first
+MARGIN = 3         # queue difference worth paying 6 s of dead time for
 
 
 class Policy:
     def decide(self, obs):
         if not obs.can_switch:
             return obs.phase
+        other = OTHER[obs.phase]
+        mine = sum(obs.queues[lane] for lane in LANES[obs.phase])
+        theirs = sum(obs.queues[lane] for lane in LANES[other])
+        their_wait = max(obs.oldest_wait[lane] for lane in LANES[other])
 
-        # 1. THE CEILING. Nothing below may override this.
-        starving, longest = None, MAX_WAIT
-        for phase in PHASE_LANES:
-            if phase == obs.phase:
-                continue
-            waited = _oldest(obs, phase)
-            if waited > longest:
-                starving, longest = phase, waited
-        if starving is not None:
-            return starving
-
-        here = _queue(obs, obs.phase)
-
-        # 2. Nobody left to serve: move on, whoever is waiting.
-        if here == 0:
-            best, best_score = obs.phase, 0.0
-            for phase in PHASE_LANES:
-                score = _queue(obs, phase) + AGE_WEIGHT * _oldest(obs, phase)
-                if score > best_score:
-                    best, best_score = phase, score
-            return best
-
-        # 3. Otherwise finish what we started. A green shorter than this wastes
-        #    more in switching than it recovers in service.
-        if obs.phase_elapsed < MIN_SERVE:
-            return obs.phase
-
-        # 4. Pressure, with age folded in, and a margin to stop dithering.
-        def pressure(phase):
-            return _queue(obs, phase) + AGE_WEIGHT * _oldest(obs, phase)
-
-        mine = pressure(obs.phase)
-        best, best_score = obs.phase, mine
-        for phase in PHASE_LANES:
-            score = pressure(phase)
-            if score > best_score:
-                best, best_score = phase, score
-
-        if best_score > mine + SWITCH_MARGIN:
-            return best
-        return obs.phase
+        # 1 + 2: the ceiling, guarded by a minimum serve time.
+        if their_wait >= MAX_WAIT and obs.phase_elapsed >= MIN_SERVE:
+            return other
+        # Nobody here, somebody there: no reason to hold.
+        if mine == 0 and theirs > 0:
+            return other
+        # 3: ordinary pressure comparison, damped.
+        return other if theirs > mine + MARGIN else obs.phase

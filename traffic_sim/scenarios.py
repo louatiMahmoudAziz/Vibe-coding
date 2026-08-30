@@ -1,13 +1,19 @@
-"""The five evaluation scenarios.
+"""The evaluation traces, grouped into three acts.
 
-Each scenario defines, per lane, a piecewise-constant arrival rate in
+Each scenario defines, per approach, a piecewise-constant arrival rate in
 vehicles per second. Rates are Bernoulli probabilities per 1-second tick,
 so they must stay below 1.0 (realistic urban values are well below 0.5).
 
-Reference capacity: with two lanes open at saturation flow the intersection
-serves at most 1.0 veh/s while green, and every phase change burns 4 seconds
-of yellow + all-red plus 2 seconds of startup lost time. Sustained demand
-above ~0.75 veh/s total therefore requires very efficient phase allocation.
+Reference capacity
+------------------
+Two approaches are open at once, each discharging at 0.5 veh/s, so the
+intersection moves 1.0 veh/s while a green is actually running. Every full
+cycle of the two phases burns 12 s of dead time (2 changes x [3 s yellow +
+1 s all-red + 2 s startup lost]). Sustained capacity is therefore
+(C - 12) / C veh/s: 0.70 at a 40 s cycle, 0.80 at 60 s, 0.85 at 80 s.
+
+Every trace below sits BELOW that line. Difficulty comes from the shape of
+demand, not from making the problem unwinnable.
 """
 
 from __future__ import annotations
@@ -47,150 +53,148 @@ class Scenario:
         return total
 
 
-def _flat(horizon: int, straight: float, left: float, lanes=LANES) -> RateTable:
-    table: RateTable = {}
-    for lane in lanes:
-        rate = left if lane.endswith("_left") else straight
-        table[lane] = ((0, horizon, rate),)
-    return table
+def _flat(horizon: int, ns: float, ew: float) -> RateTable:
+    return {
+        "north": ((0, horizon, ns),),
+        "south": ((0, horizon, ns),),
+        "east": ((0, horizon, ew),),
+        "west": ((0, horizon, ew),),
+    }
 
 
 def _build_scenarios() -> Dict[str, Scenario]:
-    """Three acts.
-
-    Capacity, for reference: cycling all four phases costs 24 s of dead time
-    (4 changes x [3 s yellow + 1 s all-red + 2 s startup]), so real throughput
-    is (C - 24) / C veh/s -- 0.60 at a 60 s cycle, 0.73 at 90 s, 0.80 at 120 s.
-
-    Every trace below sits BELOW that line. The previous rush-hour and gridlock
-    traces sat above it, which meant no policy could pass them and the score
-    measured nothing but how fast you drowned. Difficulty here comes from the
-    shape of demand, not from making the problem unwinnable.
-    """
-    scenarios = {}
+    scenarios: Dict[str, Scenario] = {}
 
     # ------------------------------------------------------------------ #
-    # ACT 1 - the pilot. Moderate, symmetric, comfortably under capacity.
-    # A lazy prompt should pass this. That is the point.
+    # ACT 1 - the pilot. Moderate, near-symmetric, comfortably winnable.
+    # A lazy prompt should pass this. That is the point: Act 1 exists to
+    # get code on the board and make people feel fast, not to filter.
+    # Total demand 0.42 veh/s, about half of capacity.
     # ------------------------------------------------------------------ #
-    horizon = 600
     scenarios["pilot_morning"] = Scenario(
         name="pilot_morning",
-        title="Monday Morning",
+        title="Monday, 6:40 a.m.",
         description=(
-            "The pilot intersection on a normal weekday. Moderate demand, "
-            "roughly even on all four approaches."
+            "A normal weekday at the pilot intersection. Traffic on all four "
+            "approaches, a little heavier north-south than east-west."
         ),
-        horizon=horizon,
+        horizon=600,
         weight=1.0,
         act="act1",
-        rates=_flat(horizon, straight=0.075, left=0.028),
+        rates=_flat(600, ns=0.120, ew=0.090),
     )
 
     # ------------------------------------------------------------------ #
-    # ACT 2 - the complaint. East-west floods; the left-turn lanes trickle.
+    # ACT 2 - two complaints, two OPPOSITE failure modes.
     #
-    # This is the trap, and it is built deliberately. Left demand is ~1 vehicle
-    # per 70 s, so those queues are never long. A controller that switches on
-    # queue length alone never sees a reason to serve them, and a switching
-    # margin large enough to stop thrashing guarantees they starve. Total
-    # demand is 0.46 veh/s -- winnable, but only if you serve the small queues.
+    # This is the heart of the challenge. The fix for one complaint is the
+    # cause of the other, and a controller has to satisfy both at once.
     # ------------------------------------------------------------------ #
-    horizon = 600
-    rates: RateTable = {
-        "E_straight": ((0, horizon, 0.150),),
-        "W_straight": ((0, horizon, 0.150),),
-        "N_straight": ((0, horizon, 0.050),),
-        "S_straight": ((0, horizon, 0.050),),
-        "N_left": ((0, horizon, 0.014),),
-        "S_left": ((0, horizon, 0.014),),
-        "E_left": ((0, horizon, 0.014),),
-        "W_left": ((0, horizon, 0.014),),
-    }
-    scenarios["complaint_evening"] = Scenario(
-        name="complaint_evening",
-        title="Thursday, 4 p.m.",
+
+    # Complaint 1: the avenue backs up in the evening rush.
+    #
+    # Demand is 0.52 veh/s -- still only 65% of capacity, so this is very
+    # winnable. But every phase change burns 6 s of dead time, and a
+    # controller that switches the moment the other queue is longer flips
+    # ~54 times in ten minutes. That is 5.4 minutes of a 10-minute run with
+    # nobody moving. Measured: greedy switching serves 77% of traffic with a
+    # 56 s average wait; anything with switching discipline serves 97% at
+    # 16 s. The lesson is that switching is not free.
+    scenarios["rush_evening"] = Scenario(
+        name="rush_evening",
+        title="Thursday, 5:50 p.m.",
         description=(
-            "East-west through traffic dominates. The left-turn lanes see a "
-            "vehicle about once a minute -- and those are the drivers calling 311."
+            "The evening rush, heavy from every direction. Traffic is well "
+            "under what the intersection can move -- if you stop wasting "
+            "green time on changing the lights."
         ),
-        horizon=horizon,
+        horizon=600,
         weight=1.0,
         act="act2",
-        rates=rates,
+        rates=_flat(600, ns=0.130, ew=0.130),
+    )
+
+    # Complaint 2: the side street never gets a green.
+    #
+    # The avenue takes 0.19 veh/s per approach (a car every ~5 s); the side
+    # street takes 0.018 (a car every ~55 s). A queue of 1 never beats a
+    # queue of 12, so the margin you just added to stop the flipping is
+    # exactly what keeps the side street red. Measured: a controller with a
+    # switching margin leaves someone waiting 188 s here, while its average
+    # wait is the BEST in the field at 5.7 s. The dashboard looks perfect.
+    scenarios["side_street"] = Scenario(
+        name="side_street",
+        title="Thursday, 4:15 p.m.",
+        description=(
+            "The avenue is packed. The side street sees about one car a "
+            "minute -- and those are the drivers who called 311."
+        ),
+        horizon=600,
+        weight=1.0,
+        act="act2",
+        rates=_flat(600, ns=0.190, ew=0.018),
     )
 
     # ------------------------------------------------------------------ #
     # ACT 3 - deployment. Never shown before the freeze. Four intersections
-    # with different characters, none of them like the pilot.
+    # that are nothing like the pilot.
     # ------------------------------------------------------------------ #
 
-    # Residential: almost empty. Punishes cycling through phases nobody wants.
-    horizon = 600
+    # Almost empty. Punishes a controller that cycles on a timer regardless
+    # of whether anyone is waiting: every pointless switch is 6 s of dead
+    # time and a red light for a car that could have gone straight through.
     scenarios["deploy_residential"] = Scenario(
         name="deploy_residential",
         title="Bay Ridge, 3 a.m.",
         description="A car every so often, from anywhere. Do not make them wait.",
-        horizon=horizon, weight=1.0, act="deployment", hidden=True,
-        rates=_flat(horizon, straight=0.012, left=0.005),
+        horizon=600, weight=1.0, act="deployment", hidden=True,
+        rates=_flat(600, ns=0.020, ew=0.020),
     )
 
-    # Commuter corridor: extreme one-way demand, the mirror of Act 2.
-    horizon = 600
-    rates = {
-        "N_straight": ((0, horizon, 0.175),),
-        "S_straight": ((0, horizon, 0.038),),
-        "E_straight": ((0, horizon, 0.055),),
-        "W_straight": ((0, horizon, 0.055),),
-        "N_left": ((0, horizon, 0.022),),
-        "S_left": ((0, horizon, 0.010),),
-        "E_left": ((0, horizon, 0.018),),
-        "W_left": ((0, horizon, 0.018),),
-    }
+    # Heavy east-west corridor: the mirror image of Act 2's avenue. A
+    # controller that learned "north-south is the busy one" fails here.
     scenarios["deploy_corridor"] = Scenario(
         name="deploy_corridor",
-        title="Northbound Corridor",
-        description="Overwhelmingly one direction. The dominant axis is not the pilot's.",
-        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
+        title="The Corridor",
+        description="Overwhelmingly east-west. The busy road is not the pilot's.",
+        horizon=600, weight=1.0, act="deployment", hidden=True,
+        rates=_flat(600, ns=0.030, ew=0.250),
     )
 
-    # Arena: quiet, then four minutes of chaos, then quiet again.
+    # Quiet, then four minutes of one-directional chaos, then quiet again.
+    # Rewards adapting to what is actually queued right now.
     horizon = 720
     burst_a, burst_b = 180, 420
-    rates = {}
-    for lane in LANES:
-        base = 0.020 if lane.endswith("_straight") else 0.008
-        if lane in ("E_straight", "W_straight"):
-            rates[lane] = ((0, burst_a, base), (burst_a, burst_b, 0.170), (burst_b, horizon, base))
-        elif lane in ("E_left", "W_left"):
-            rates[lane] = ((0, burst_a, base), (burst_a, burst_b, 0.042), (burst_b, horizon, base))
-        else:
-            rates[lane] = ((0, horizon, base),)
     scenarios["deploy_arena"] = Scenario(
         name="deploy_arena",
         title="Barclays, Game Night",
         description="Nothing, then everything, then nothing. Absorb it and drain it.",
-        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
+        horizon=horizon, weight=1.0, act="deployment", hidden=True,
+        rates={
+            "north": ((0, horizon, 0.025),),
+            "east": ((0, horizon, 0.025),),
+            "west": ((0, horizon, 0.025),),
+            "south": ((0, burst_a, 0.025),
+                      (burst_a, burst_b, 0.400),
+                      (burst_b, horizon, 0.025)),
+        },
     )
 
-    # Reversing: the busy axis flips at half-time. Punishes anything hard-coded.
+    # The busy axis flips at half-time. Punishes anything hard-coded to a
+    # direction, and anything tuned to the pilot's traffic pattern.
     horizon = 720
     half = horizon // 2
-    rates = {
-        "N_straight": ((0, half, 0.135), (half, horizon, 0.045)),
-        "S_straight": ((0, half, 0.135), (half, horizon, 0.045)),
-        "E_straight": ((0, half, 0.045), (half, horizon, 0.135)),
-        "W_straight": ((0, half, 0.045), (half, horizon, 0.135)),
-        "N_left": ((0, half, 0.024), (half, horizon, 0.012)),
-        "S_left": ((0, half, 0.024), (half, horizon, 0.012)),
-        "E_left": ((0, half, 0.014), (half, horizon, 0.030)),
-        "W_left": ((0, half, 0.014), (half, horizon, 0.030)),
-    }
     scenarios["deploy_reversal"] = Scenario(
         name="deploy_reversal",
         title="Queens Boulevard",
         description="Busy north-south all morning, busy east-west all afternoon.",
-        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
+        horizon=horizon, weight=1.0, act="deployment", hidden=True,
+        rates={
+            "north": ((0, half, 0.190), (half, horizon, 0.050)),
+            "south": ((0, half, 0.190), (half, horizon, 0.050)),
+            "east": ((0, half, 0.050), (half, horizon, 0.190)),
+            "west": ((0, half, 0.050), (half, horizon, 0.190)),
+        },
     )
 
     return scenarios
@@ -202,19 +206,19 @@ ACTS: Tuple[str, ...] = ("act1", "act2", "deployment")
 # a controller that fixes Act 2 by breaking Act 1 fails Act 1.
 ACT_SCENARIOS: Dict[str, Tuple[str, ...]] = {
     "act1": ("pilot_morning",),
-    "act2": ("pilot_morning", "complaint_evening"),
+    "act2": ("pilot_morning", "rush_evening", "side_street"),
     "deployment": (
-        "pilot_morning", "complaint_evening",
+        "pilot_morning", "rush_evening", "side_street",
         "deploy_residential", "deploy_corridor", "deploy_arena", "deploy_reversal",
     ),
 }
+
+SCENARIOS: Dict[str, Scenario] = _build_scenarios()
 
 
 def scenarios_for_act(act: str) -> Tuple[Scenario, ...]:
     return tuple(SCENARIOS[n] for n in ACT_SCENARIOS.get(act, ()))
 
-
-SCENARIOS: Dict[str, Scenario] = _build_scenarios()
 
 # Public seeds used for local development and the live leaderboard.
 # Organizers re-run the final evaluation with hidden seeds (see docs).

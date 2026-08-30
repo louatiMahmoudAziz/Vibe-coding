@@ -2,15 +2,13 @@
 
 The world model
 ---------------
-* Four approaches: North, East, South, West.
-* Each approach has two lanes:
-    - ``<D>_straight`` : straight + right-turn traffic
-    - ``<D>_left``     : protected left-turn traffic
-* Four green phases, each opening a pair of non-conflicting lanes:
-    - ``NS_STRAIGHT`` -> N_straight, S_straight
-    - ``NS_LEFT``     -> N_left,     S_left
-    - ``EW_STRAIGHT`` -> E_straight, W_straight
-    - ``EW_LEFT``     -> E_left,     W_left
+* Four approaches, one lane each: ``north``, ``east``, ``south``, ``west``.
+* Two green phases, each opening the two approaches that do not conflict:
+    - ``NS_GREEN`` -> north, south
+    - ``EW_GREEN`` -> east,  west
+
+  One road moves or the other does. There is no third option, and no
+  left-turn phase: everything at this intersection goes straight through.
 
 Safety rules (enforced by the engine, NOT by participant policies)
 ------------------------------------------------------------------
@@ -42,16 +40,12 @@ from typing import Callable, Dict, List, Optional, Tuple
 # Static geometry and signal timing constants
 # --------------------------------------------------------------------------- #
 
-DIRECTIONS: Tuple[str, ...] = ("N", "E", "S", "W")
-TURNS: Tuple[str, ...] = ("straight", "left")
-LANES: Tuple[str, ...] = tuple(f"{d}_{t}" for d in DIRECTIONS for t in TURNS)
+LANES: Tuple[str, ...] = ("north", "east", "south", "west")
 
-PHASES: Tuple[str, ...] = ("NS_STRAIGHT", "NS_LEFT", "EW_STRAIGHT", "EW_LEFT")
+PHASES: Tuple[str, ...] = ("NS_GREEN", "EW_GREEN")
 PHASE_LANES: Dict[str, Tuple[str, str]] = {
-    "NS_STRAIGHT": ("N_straight", "S_straight"),
-    "NS_LEFT": ("N_left", "S_left"),
-    "EW_STRAIGHT": ("E_straight", "W_straight"),
-    "EW_LEFT": ("E_left", "W_left"),
+    "NS_GREEN": ("north", "south"),
+    "EW_GREEN": ("east", "west"),
 }
 
 MIN_GREEN = 6        # seconds a green must be held before it may change

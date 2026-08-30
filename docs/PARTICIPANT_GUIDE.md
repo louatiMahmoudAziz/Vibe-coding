@@ -17,11 +17,11 @@ TEAM_NAME = "Your Team Name"          # what the leaderboard displays
 class Policy:
     def decide(self, obs) -> str:
         ...
-        return "NS_STRAIGHT"          # the phase you want green now
+        return "NS_GREEN"             # the phase you want green now
 ```
 
 `decide()` is called once per simulated second. Return one of
-`"NS_STRAIGHT"`, `"NS_LEFT"`, `"EW_STRAIGHT"`, `"EW_LEFT"` (or the current
+`"NS_GREEN"` or `"EW_GREEN"` (or the current
 phase / `None` to hold). Illegal timing is impossible — the engine ignores
 requests it can't honor — but an invalid *name* or an exception zeroes the
 run, so don't get creative with return values.
@@ -41,7 +41,7 @@ state, and runs use different seeds anyway.
 | `obs.in_transition` | bool | yellow/all-red currently running |
 | `obs.transition_remaining` | int | seconds left in the transition |
 | `obs.can_switch` | bool | a switch request would take effect this tick |
-| `obs.queues` | dict | lane → queued vehicles, e.g. `obs.queues["N_left"]` |
+| `obs.queues` | dict | approach → queued vehicles, e.g. `obs.queues["north"]` |
 | `obs.oldest_wait` | dict | lane → seconds the front vehicle has waited |
 | `obs.arrivals_total` | int | cumulative arrivals this run |
 | `obs.served_total` | int | cumulative departures this run |
@@ -49,7 +49,7 @@ state, and runs use different seeds anyway.
 | `obs.phases` | tuple | the four phase names |
 
 Lane names: `{N,E,S,W}_{straight,left}`. Phase→lanes mapping:
-`NS_STRAIGHT` opens `N_straight` + `S_straight`, and so on.
+`NS_GREEN` opens `north` + `south`; `EW_GREEN` opens `east` + `west`.
 
 ## Physics cheat sheet
 

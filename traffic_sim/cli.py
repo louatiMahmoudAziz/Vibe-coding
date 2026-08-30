@@ -3,7 +3,7 @@
     python -m traffic_sim.cli scenarios
     python -m traffic_sim.cli evaluate submissions/my_team/policy.py
     python -m traffic_sim.cli evaluate submissions/my_team/policy.py \
-        --scenario complaint_evening --seeds 7,8,9 --json
+        --scenario side_street --seeds 7,8,9 --json
     python -m traffic_sim.cli watch submissions/my_team/policy.py \
         --scenario deploy_arena --seed 101 --every 10
 """

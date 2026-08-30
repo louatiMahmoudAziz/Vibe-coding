@@ -247,7 +247,7 @@ INDEX_HTML = f"""<!DOCTYPE html>
   <p class="meta" id="meta">Loading&hellip;</p>
   <p style="margin: 0 0 18px"><a class="btn" id="cta-btn" href="/signup">Join the challenge</a>
      <a class="btn secondary" id="login-btn" href="/login" style="margin-left:8px">Log in</a>
-     <span class="hint" id="cta-hint" style="margin-left:12px">Create an account, upload your policy as often as you like &mdash; your best score counts.</span></p>
+     <span class="hint" id="cta-hint" style="margin-left:12px">Create an account, then submit as often as you like &mdash; your best run counts, and requirements come before averages.</span></p>
   <table>
     <thead><tr id="head-row"></tr></thead>
     <tbody id="rows"><tr><td class="empty" id="empty-cell">Waiting for the first participant&hellip;</td></tr></tbody>
@@ -357,7 +357,7 @@ setInterval(refresh, 4000);
   cta.href = "/me";
   document.getElementById("login-btn").remove();
   document.getElementById("cta-hint").textContent =
-    "Upload a new version of your policy \\u2014 your best score is what counts.";
+    "Submit a new version whenever you like \\u2014 your best run is the one that counts.";
 }})();
 </script>
 {USERMENU_SNIPPET}
@@ -390,12 +390,115 @@ SIGNUP_HTML = f"""<!DOCTYPE html>
          <a class="btn secondary" href="/login" style="margin-left:8px">I already have an account</a></p>
     </form>
     <p class="hint">You'll land on your personal upload page. Upload new versions of your
-       policy as often as you like; your <b>best</b> score is what ranks on the
-       <a href="/">leaderboard</a>. Lost the tab? Just <a href="/login">log in</a> again.</p>
+       policy as often as you like. Every run is checked against the
+       <b>requirements</b> first &mdash; miss one and you rank below everyone who
+       missed none, whatever your averages say &mdash; and your best run is what
+       shows on the <a href="/">leaderboard</a>. Lost the tab? Just <a href="/login">log in</a> again.</p>
   </div>
 </div>
 </body>
 </html>
+"""
+
+
+PRIMER_CSS = """
+  .primer h3 { margin: 0 0 6px; font-size: 15px; letter-spacing: .2px; }
+  .primer p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+  .primer b { color: var(--text); font-weight: 650; }
+  .primer code { color: var(--accent); background: #ffffff10;
+                 padding: 1px 6px; border-radius: 5px; font-size: 12.5px; }
+  .phase-pair { display: flex; gap: 26px; flex-wrap: wrap; align-items: flex-start;
+                margin: 4px 0 20px; }
+  .phase-fig { text-align: center; }
+  .phase-fig figcaption { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+  .phase-fig figcaption b { color: var(--green); }
+  .primer-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .gate-list { list-style: none; padding: 0; margin: 6px 0 0; }
+  .gate-list li { display: flex; gap: 9px; align-items: baseline; padding: 5px 0;
+                  color: var(--muted); font-size: 13.5px; border-bottom: 1px solid var(--line); }
+  .gate-list li:last-child { border-bottom: 0; }
+  .gate-list .num { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+"""
+
+def _phase_svg(green_ns: bool) -> str:
+    """One little intersection, one phase lit."""
+    on, off = "#2ee6a8", "#ff6b81"
+    ns, ew = (on, off) if green_ns else (off, on)
+    return f'''<svg width="150" height="150" viewBox="0 0 150 150" role="img">
+  <rect width="150" height="150" rx="10" fill="#0a0e1c"/>
+  <rect x="0" y="57" width="150" height="36" fill="#161d33"/>
+  <rect x="57" y="0" width="36" height="150" fill="#161d33"/>
+  <rect x="57" y="57" width="36" height="36" fill="#1d2643"/>
+  <circle cx="75" cy="46"  r="6" fill="{ns}"/>
+  <circle cx="75" cy="104" r="6" fill="{ns}"/>
+  <circle cx="46"  cy="75" r="6" fill="{ew}"/>
+  <circle cx="104" cy="75" r="6" fill="{ew}"/>
+  <text x="75" y="14" fill="#8b93b0" font-size="10" text-anchor="middle"
+        font-family="monospace">north</text>
+  <text x="75" y="144" fill="#8b93b0" font-size="10" text-anchor="middle"
+        font-family="monospace">south</text>
+  <text x="16" y="79" fill="#8b93b0" font-size="10" text-anchor="middle"
+        font-family="monospace">west</text>
+  <text x="134" y="79" fill="#8b93b0" font-size="10" text-anchor="middle"
+        font-family="monospace">east</text>
+</svg>'''
+
+
+PRIMER_CARD = f"""
+  <div class="card primer">
+    <h2 style="margin:0 0 4px">How the intersection works</h2>
+    <p style="margin-bottom:14px">Read this once. It is the whole problem.</p>
+
+    <div class="phase-pair">
+      <figure class="phase-fig" style="margin:0">
+        {_phase_svg(True)}
+        <figcaption><b>NS_GREEN</b><br>north and south move</figcaption>
+      </figure>
+      <figure class="phase-fig" style="margin:0">
+        {_phase_svg(False)}
+        <figcaption><b>EW_GREEN</b><br>east and west move</figcaption>
+      </figure>
+      <p style="flex:1 1 260px;min-width:240px">
+        Four roads meet. <b>One road moves or the other does</b> &mdash; there is
+        no third option and no turn arrows. Cars arrive on their own schedule,
+        queue at the red light, and cross when it goes green. You are writing the
+        thing that decides, second by second, which road gets the green.
+      </p>
+    </div>
+
+    <div class="primer-grid">
+      <div>
+        <h3>Your controller</h3>
+        <p>Runs <b>once every simulated second</b> and answers one question by
+           returning <code>"NS_GREEN"</code> or <code>"EW_GREEN"</code>. Returning
+           the phase that is already green means &ldquo;leave it alone&rdquo;.</p>
+      </div>
+      <div>
+        <h3>What it can see</h3>
+        <p>For each of north, south, east and west: <b>how many cars are queued</b>
+           and <b>how long the front car has been waiting</b>. Plus which phase is
+           green now and how long it has been green. It cannot see the future, and
+           it does not know which scenario it is running.</p>
+      </div>
+      <div>
+        <h3>What switching costs</h3>
+        <p>A green must hold <b>6 seconds</b> before it can change. Every change
+           then burns <b>6 more seconds</b> in which nobody moves &mdash; 3s yellow,
+           1s all-red, 2s for traffic to get going again. Switch 50 times in a
+           10-minute run and you have thrown away <b>5 minutes of green</b>.</p>
+      </div>
+      <div>
+        <h3>What has to be true</h3>
+        <p>Checked on every scenario. Miss one and you rank below everyone who
+           missed none, however good your averages are.</p>
+        <ul class="gate-list">
+          <li><span class="num">90%</span><span>of cars get through</span></li>
+          <li><span class="num">45s</span><span>average wait, at most</span></li>
+          <li><span class="num">140s</span><span>longest wait by anyone, at most</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
 """
 
 
@@ -414,7 +517,7 @@ AI_CARD = """
        below is sent along, so you can ask for changes to what you already have.</p>
     <label for="prompt">Tell the AI what to build</label>
     <textarea id="prompt" spellcheck="true" rows="5"
-      placeholder="Think about what the client actually asked for, then say what the policy must guarantee and what it should optimise."></textarea>
+      placeholder="Example -- change it, this is only to show you the shape:\n\nGive the green to whichever road has more cars waiting. Do not change the light unless the other road has at least 4 more cars than the one moving now, because every change wastes 6 seconds. But if anyone on the red road has been waiting more than 70 seconds, switch anyway."></textarea>
     <div class="ai-actions">
       <button class="btn secondary" type="button" id="ask">Ask
         <span class="cost">~1,200</span></button>
@@ -549,12 +652,11 @@ REPLAY_CARD = """
 
 REPLAY_SCRIPT = """
 const PHASE_LANES = {
-  NS_STRAIGHT: ["N_straight", "S_straight"], NS_LEFT: ["N_left", "S_left"],
-  EW_STRAIGHT: ["E_straight", "W_straight"], EW_LEFT: ["E_left", "W_left"]
+  NS_GREEN: ["north", "south"], EW_GREEN: ["east", "west"]
 };
 const APPROACH = {
-  N: {dx: 0, dy: -1, ox: 1, oy: 0}, S: {dx: 0, dy: 1, ox: -1, oy: 0},
-  E: {dx: 1, dy: 0, ox: 0, oy: 1},  W: {dx: -1, dy: 0, ox: 0, oy: -1}
+  north: {dx: 0, dy: -1}, south: {dx: 0, dy: 1},
+  east:  {dx: 1, dy: 0},  west:  {dx: -1, dy: 0}
 };
 const rcv = document.getElementById("replay-canvas");
 const rctx = rcv.getContext("2d");
@@ -582,21 +684,20 @@ function drawFrame(d, f) {
   const open = PHASE_LANES[phase] || [];
 
   d.lanes.forEach(function (lane, idx) {
-    const dir = lane[0], isLeft = lane.indexOf("left") > 0;
-    const a = APPROACH[dir], lat = isLeft ? 30 : -30, gap = ROAD / 2 + 14;
+    const a = APPROACH[lane], lat = 0, gap = ROAD / 2 + 14;
     const isOpen = !inTrans && open.indexOf(lane) !== -1;
 
     rctx.fillStyle = isOpen ? "#2ee6a8" : (inTrans ? "#ffb84d" : "#ff6b81");
     rctx.globalAlpha = isOpen ? 1 : 0.55;
     rctx.beginPath();
-    rctx.arc(RCX + a.dx * gap + a.ox * lat, RCY + a.dy * gap + a.oy * lat, 5.5, 0, 6.284);
+    rctx.arc(RCX + a.dx * gap, RCY + a.dy * gap, 5.5, 0, 6.284);
     rctx.fill(); rctx.globalAlpha = 1;
 
     const n = Math.min(f[2][idx], 26), oldest = f[3][idx];
     for (let i = 0; i < n; i++) {
       const dd = gap + 12 + i * (CAR + CGAP);
-      const x = RCX + a.dx * dd + a.ox * lat - CAR / 2;
-      const y = RCY + a.dy * dd + a.oy * lat - CAR / 2;
+      const x = RCX + a.dx * dd - CAR / 2;
+      const y = RCY + a.dy * dd - CAR / 2;
       // the front vehicle's wait is known exactly; those behind it waited less
       const w = oldest * (1 - i / Math.max(n, 1));
       rctx.fillStyle = w > 90 ? "#ff6b81" : w > 45 ? "#ffb84d" : "#7f8cb5";
@@ -608,7 +709,7 @@ function drawFrame(d, f) {
       const dd = gap + 12 + 26 * (CAR + CGAP);
       rctx.fillStyle = "#ff6b81"; rctx.font = "600 13px monospace"; rctx.textAlign = "center";
       rctx.fillText("+" + (f[2][idx] - 26),
-        RCX + a.dx * dd + a.ox * lat, RCY + a.dy * dd + a.oy * lat + 4);
+        RCX + a.dx * dd, RCY + a.dy * dd + 4);
     }
   });
 
@@ -759,12 +860,13 @@ ME_HTML = f"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My submissions - Traffic Flow Challenge</title>
-<style>{BASE_CSS}</style>
+<style>{BASE_CSS}{PRIMER_CSS}</style>
 </head>
 <body>
 <div class="wrap" style="max-width: 860px">
 {_HEADER}
 {ACT_BOARD}
+{PRIMER_CARD}
 {AI_CARD}
 {REPLAY_CARD}
   <div class="card">
@@ -773,8 +875,9 @@ ME_HTML = f"""<!DOCTYPE html>
     <p class="hint">This is your personal upload page. You stay signed in on
        this device until you log out (click your name, top right); from another
        device just <a href="/login">log in</a> again. Every upload is
-       automatically evaluated on 5 scenarios &times; 3 seeds; your best total
-       ranks on the <a href="/">live leaderboard</a>.</p>
+       automatically run against every scenario in the current act, on 3 traffic
+       seeds each. Requirements are checked before averages, and your best run is
+       what shows on the <a href="/">live leaderboard</a>.</p>
     <form method="post" enctype="multipart/form-data" id="upload-form">
       <label>Upload your <code>policy.py</code> (must define <code>class Policy</code> with <code>decide(self, obs)</code>)</label>
       <input type="file" name="file" accept=".py,text/x-python">
@@ -820,8 +923,9 @@ async function refresh() {{
   }} catch (err) {{ return; }}
   if (payload.error) return;
   document.getElementById("hello").textContent =
-    payload.name + " \\u2014 best score: " +
-    (payload.best_score === null ? "none yet" : payload.best_score.toFixed(2));
+    payload.name + (payload.best_score === null
+      ? " \\u2014 nothing submitted yet"
+      : " \\u2014 best run: " + payload.best_score.toFixed(2));
   const body = document.getElementById("history");
   body.replaceChildren();
   if (!payload.submissions.length) {{

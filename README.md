@@ -3,40 +3,41 @@
 A workshop coding challenge. Teams use a coding agent to implement an
 **adaptive traffic-light policy** for a four-way intersection, competing to
 maximize vehicle throughput while minimizing waiting latency and preventing
-starvation. Submissions are evaluated automatically against five realistic
-traffic scenarios, and results are published to a live leaderboard.
+starvation. The challenge runs in three acts: a pilot, two client complaints
+that pull in opposite directions, and a deployment to intersections nobody
+has seen. Submissions are evaluated automatically and published to a live
+leaderboard.
 
 ```
-            N_straight  N_left
-                 |        |
-                 v        v
-            +----------------+
-  W_straight |                | <- E_straight
-  W_left ->  |   4-way        |
-             |   intersection | <- E_left
-            +----------------+
-                 ^        ^
-                 |        |
-            S_left   S_straight
+                 north
+                   |
+                   v
+            +-------------+
+    west -> |    4-way    | <- east
+            | intersection|
+            +-------------+
+                   ^
+                   |
+                 south
 ```
 
 ## The problem
 
 You control the signal phases of one intersection. Every simulated second
-your policy sees the queues and waiting times on all eight lanes and chooses
-which of four phases should be green:
+your policy sees the queues and waiting times on all four approaches and
+chooses which of two phases should be green:
 
 | Phase | Opens |
 |-------|-------|
-| `NS_STRAIGHT` | North + South through/right lanes |
-| `NS_LEFT` | North + South protected left turns |
-| `EW_STRAIGHT` | East + West through/right lanes |
-| `EW_LEFT` | East + West protected left turns |
+| `NS_GREEN` | north + south |
+| `EW_GREEN` | east + west |
+
+One road moves or the other does. There is no third option.
 
 The engine enforces real-world signal safety for you: greens hold for at
 least **6 s**, and every change costs **3 s yellow + 1 s all-red** during
 which nobody moves, plus **2 s** of startup lost time when the new green
-begins. Open lanes discharge one vehicle every 2 seconds. That is the whole
+begins. Open approaches discharge one vehicle every 2 seconds. That is the whole
 tension of the challenge: switching often keeps latency low, switching
 rarely keeps throughput high, and ignoring a quiet lane starves it.
 

@@ -33,14 +33,21 @@ class TestDemoSubmissions(unittest.TestCase):
             self.assertGreater(result.total, 20.0, policy_path)
 
     def test_adaptive_beats_fixed_on_quiet_street(self):
-        """The core lesson of the workshop must hold in the harness."""
+        """The core lesson of the workshop must hold in the harness.
+
+        Note which controller is used here. team_max_pressure -- greedy with a
+        switching margin -- is actually WORSE than a fixed timer on an empty
+        street, because it waits for a queue difference that never arrives.
+        That is the Act 2 trap, and it is deliberate. The controller that
+        beats the timer is the one that bounds waiting.
+        """
         fixed = evaluate_submission(
             SUBMISSIONS / "team_fixed_timer" / "policy.py",
             scenario_names=["deploy_residential"],
             seeds=[101, 202],
         )
         adaptive = evaluate_submission(
-            SUBMISSIONS / "team_max_pressure" / "policy.py",
+            SUBMISSIONS.parent / "solutions" / "act2_ceiling.py",
             scenario_names=["deploy_residential"],
             seeds=[101, 202],
         )
