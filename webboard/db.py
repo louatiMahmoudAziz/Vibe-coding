@@ -411,6 +411,7 @@ def leaderboard(db_path: Path) -> List[Dict]:
                     "act": act,
                     "act_index": ACTS.index(act),
                     "shown_act": shown_act,
+                    "shown_act_index": ACTS.index(shown_act) if shown_act in ACTS else 0,
                     "cleared": acts_cleared(db_path, person["id"]),
                     "attempts": len(subs),
                     "best_score": best["total_score"] if best else None,
@@ -431,7 +432,10 @@ def leaderboard(db_path: Path) -> List[Dict]:
     def sort_key(entry):
         has_score = entry["best_score"] is not None
         return (
-            -entry["act_index"],                    # furthest act reached wins
+            # Rank on the act you have actually BEEN JUDGED IN, not the one you
+            # unlocked. Unlocking Act 3 and never submitting there is not an
+            # achievement over somebody who cleared Act 3.
+            -entry["shown_act_index"],
             0 if has_score else 1,
             0 if entry.get("best_passed") else 1,   # then requirements
             entry.get("best_rank_wait") or 0.0,     # then: how long people waited

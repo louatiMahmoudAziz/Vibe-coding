@@ -274,14 +274,17 @@ const el = (tag, cls, text) => {{
   if (text !== undefined) node.textContent = text;
   return node;
 }};
+// Average wait in seconds for one scenario. LOWER IS BETTER here, unlike the
+// score this replaced, so the bar fills as the wait grows and 45s (the limit)
+// is a full bar.
 const scoreCell = (value) => {{
   const td = el("td");
   if (value === null || value === undefined) {{ td.textContent = "-"; return td; }}
   const cell = el("span", "cell");
-  cell.appendChild(el("b", "", value.toFixed(1)));
+  cell.appendChild(el("b", "", value.toFixed(1) + "s"));
   const bar = el("span", "bar");
-  const fill = el("i", value >= 70 ? "ok" : value >= 40 ? "warn" : "bad");
-  fill.style.width = Math.max(2, Math.min(100, value)) + "%";
+  const fill = el("i", value <= 20 ? "ok" : value <= 35 ? "warn" : "bad");
+  fill.style.width = Math.max(3, Math.min(100, (value / 45) * 100)) + "%";
   bar.appendChild(fill);
   cell.appendChild(bar);
   td.appendChild(cell);
@@ -297,7 +300,7 @@ async function refresh() {{
   document.getElementById("meta").textContent =
     "Seeds " + payload.seeds.join(", ") + " \\u00b7 " + payload.scenarios.length +
     (payload.scenarios.length === 1 ? " scenario" : " scenarios") +
-    " scored this act \\u00b7 requirements before averages \\u00b7 " +
+    " in play \\u00b7 each run scored on its own act \\u00b7 " +
     payload.standings.length + " participant(s)" +
     (payload.backlog > 0 ? " \\u00b7 " + payload.backlog + " evaluation(s) queued" : "");
 
@@ -330,10 +333,15 @@ async function refresh() {{
     tr.appendChild(rankTd);
     tr.appendChild(el("td", "name", entry.name));
 
+    // The act this row is JUDGED on. entry.act is what they have unlocked,
+    // which can be one ahead if they have not submitted there yet -- showing
+    // that next to Act 2 results made the row contradict itself.
     const ACT_LABEL = {{act1: "1", act2: "2", deployment: "3"}};
     const actTd = el("td");
-    const pill = el("span", "badge", ACT_LABEL[entry.act] || "1");
-    if (entry.act === "deployment") pill.style.color = "var(--green)";
+    const pill = el("span", "actpill", ACT_LABEL[entry.shown_act] || "1");
+    if (entry.shown_act === "deployment") pill.classList.add("final");
+    if (entry.act !== entry.shown_act) pill.title =
+      "Unlocked act " + (ACT_LABEL[entry.act] || "1") + ", not submitted there yet";
     actTd.appendChild(pill);
     tr.appendChild(actTd);
 
@@ -445,6 +453,11 @@ PRIMER_CSS = """
                   color: var(--muted); font-size: 13.5px; border-bottom: 1px solid var(--line); }
   .gate-list li:last-child { border-bottom: 0; }
   .gate-list .num { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .actpill { display: inline-flex; align-items: center; justify-content: center;
+             min-width: 28px; height: 28px; border-radius: 8px; font-weight: 700;
+             background: #ffffff12; color: var(--muted); font-size: 13px; }
+  .actpill.final { background: #2ee6a822; color: var(--green); }
 
   .unlock-veil { position: fixed; inset: 0; z-index: 90; display: flex;
                  align-items: center; justify-content: center; padding: 24px;

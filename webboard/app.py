@@ -428,8 +428,11 @@ class BoardHandler(BaseHTTPRequestHandler):
     def _scenario_scores(detail: Optional[Dict]) -> Dict[str, float]:
         if not detail:
             return {}
+        # Average wait, not the old 0-100 composite. Every controller scores
+        # 88-97 on that scale, so printing it made a catastrophic policy and an
+        # excellent one look identical.
         return {
-            s["scenario"]: s["mean_score"] for s in detail.get("scenarios", [])
+            s["scenario"]: s["mean_avg_wait"] for s in detail.get("scenarios", [])
         }
 
     @staticmethod
@@ -461,6 +464,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 {
                     "name": entry["name"],
                     "act": entry["act"],
+                    "shown_act": entry["shown_act"],
                     "cleared": entry["cleared"],
                     "best_score": entry["best_score"],
                     "best_passed": entry["best_passed"],
