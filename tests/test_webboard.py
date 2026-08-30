@@ -101,18 +101,53 @@ class TestDb(unittest.TestCase):
         db.create_participant(legacy_path, "New Kid", "s3cret")
         self.assertIsNotNone(db.authenticate(legacy_path, "New Kid", "s3cret"))
 
-    def test_leaderboard_ranks_by_best_then_first(self):
+    def _finish(self, person, *, passed, avg, p95=0.0, score=50.0):
+        sub = db.create_submission(self.db_path, person["id"])
+        db.set_submission_code_path(self.db_path, sub, "x.py")
+        db.finish_submission(
+            self.db_path, sub, score, avg,
+            {"scenarios": [], "passed_all": passed,
+             "mean_p95_wait": p95, "worst_wait": int(p95)},
+            None,
+        )
+        return sub
+
+    def test_requirements_outrank_averages(self):
+        """The whole point of the board: an unacceptable system ranks last.
+
+        Alice's numbers are far better than Bob's. She missed a requirement.
+        She loses. If this test ever flips, the leaderboard is teaching people
+        to optimise a metric while shipping something nobody can live with.
+        """
         alice = db.create_participant(self.db_path, "Alice", "password")
         bob = db.create_participant(self.db_path, "Bob", "password")
-        for person, score in ((alice, 50.0), (bob, 70.0), (alice, 70.0)):
-            sub = db.create_submission(self.db_path, person["id"])
-            db.set_submission_code_path(self.db_path, sub, "x.py")
-            db.finish_submission(self.db_path, sub, score, 10.0, {"scenarios": []}, None)
+        self._finish(alice, passed=False, avg=5.0, score=95.0)
+        self._finish(bob, passed=True, avg=20.0, score=60.0)
+
         board = db.leaderboard(self.db_path)
-        # Bob reached 70 first, so he outranks Alice despite the tie.
         self.assertEqual([e["name"] for e in board], ["Bob", "Alice"])
-        self.assertEqual(board[0]["best_score"], 70.0)
-        self.assertEqual(board[1]["attempts"], 2)
+        self.assertTrue(board[0]["best_passed"])
+        self.assertFalse(board[1]["best_passed"])
+
+    def test_among_passers_the_tail_breaks_the_tie(self):
+        """Same mean wait; the one with the tighter tail wins."""
+        steady = db.create_participant(self.db_path, "Steady", "password")
+        spiky = db.create_participant(self.db_path, "Spiky", "password")
+        self._finish(steady, passed=True, avg=12.0, p95=20.0)
+        self._finish(spiky, passed=True, avg=12.0, p95=90.0)
+
+        board = db.leaderboard(self.db_path)
+        self.assertEqual([e["name"] for e in board], ["Steady", "Spiky"])
+
+    def test_best_submission_is_the_passing_one_not_the_high_scorer(self):
+        """A participant's own best run is chosen by requirements too."""
+        person = db.create_participant(self.db_path, "Iterator", "password")
+        self._finish(person, passed=False, avg=4.0, score=99.0)
+        self._finish(person, passed=True, avg=18.0, score=55.0)
+
+        entry = db.leaderboard(self.db_path)[0]
+        self.assertTrue(entry["best_passed"])
+        self.assertEqual(entry["attempts"], 2)
 
 
 class TestServerEndToEnd(unittest.TestCase):

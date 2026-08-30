@@ -10,11 +10,11 @@ from email.policy import default as _email_policy
 from http import cookies as http_cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 from urllib.parse import parse_qs, quote, urlparse
 
 from traffic_sim import runner
-from traffic_sim.scenarios import DEFAULT_SEEDS, SCENARIOS
+from traffic_sim.scenarios import DEFAULT_SEEDS, SCENARIOS, scenarios_for_act
 
 from . import db, gateway, pages
 from .evaluator import Evaluator
@@ -204,7 +204,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                 }
             )
         if path == "/control":
-            return self._html(pages.control_page())
+            return self._html(pages.control_page(enabled=bool(ADMIN_PASSWORD)))
         if path == "/api/budget":
             return self._api_budget()
         parts = [p for p in path.split("/") if p]
@@ -456,7 +456,25 @@ class BoardHandler(BaseHTTPRequestHandler):
             s["scenario"]: s["mean_score"] for s in detail.get("scenarios", [])
         }
 
+    @staticmethod
+    def _failed_gates(detail: Optional[Dict]) -> List[str]:
+        """Which requirements this submission missed, as short labels.
+
+        The board shows WHY somebody is below the line. "Missed: nobody
+        stranded" teaches; a number that is 3 points lower does not.
+        """
+        if not detail:
+            return []
+        missed = []
+        for scenario in detail.get("scenarios", []):
+            for run in scenario.get("runs", []):
+                for req in run.get("requirements", []):
+                    if not req.get("passed") and req.get("label") not in missed:
+                        missed.append(req.get("label"))
+        return missed
+
     def _api_leaderboard(self) -> None:
+        act = db.current_act(self.server.db_path)
         entries = db.leaderboard(self.server.db_path)
         standings = []
         for entry in entries:
@@ -464,6 +482,10 @@ class BoardHandler(BaseHTTPRequestHandler):
                 {
                     "name": entry["name"],
                     "best_score": entry["best_score"],
+                    "best_passed": entry["best_passed"],
+                    "best_wait": entry["best_rank_wait"],
+                    "best_worst_wait": entry["best_worst_wait"],
+                    "failed_gates": self._failed_gates(entry["best_detail"]),
                     "scenario_scores": self._scenario_scores(entry["best_detail"]),
                     "attempts": entry["attempts"],
                     "last_activity": entry["last_activity"],
@@ -475,8 +497,12 @@ class BoardHandler(BaseHTTPRequestHandler):
             {
                 "generated_at": time.time(),
                 "seeds": list(self.server.seeds),
+                "act": act,
+                # Only the traces this act actually scores. Listing all seven
+                # printed "7 scenarios per evaluation" above six empty columns.
                 "scenarios": [
-                    {"name": s.name, "title": s.title} for s in SCENARIOS.values()
+                    {"name": s.name, "title": s.title}
+                    for s in scenarios_for_act(act)
                 ],
                 "backlog": self.server.evaluator.backlog,
                 "standings": standings,

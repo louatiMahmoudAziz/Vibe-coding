@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS submissions (
     status TEXT NOT NULL DEFAULT 'pending',   -- pending|evaluating|scored|error
     total_score REAL,
     mean_avg_wait REAL,
+    mean_p95_wait REAL,
+    passed_all INTEGER,
+    worst_wait INTEGER,
     detail_json TEXT,
     error TEXT,
     code_path TEXT,
@@ -91,6 +94,11 @@ def init(db_path: Path) -> None:
         columns = {row[1] for row in conn.execute('PRAGMA table_info(submissions)')}
         if "act" not in columns:
             conn.execute("ALTER TABLE submissions ADD COLUMN act TEXT NOT NULL DEFAULT 'act1'")
+        for column, decl in (("mean_p95_wait", "REAL"),
+                             ("passed_all", "INTEGER"),
+                             ("worst_wait", "INTEGER")):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE submissions ADD COLUMN {column} {decl}")
         # Migration for databases created before accounts had passwords.
         columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(participants)")
@@ -256,16 +264,26 @@ def finish_submission(
     detail: Optional[Dict],
     error: Optional[str],
 ) -> None:
+    # The requirement verdict is what ranks a submission; the composite score
+    # is only a tie-break among submissions that already passed. Both are
+    # pulled straight out of the detail the evaluator produced.
+    passed = int(bool(detail.get("passed_all"))) if detail else 0
+    p95 = float(detail.get("mean_p95_wait", 0.0)) if detail else None
+    worst = int(detail.get("worst_wait", 0)) if detail else None
     # A submission with a score counts as scored even if some runs errored
     # (the note is surfaced next to the score); no score at all is an error.
     with connect(db_path) as conn:
         conn.execute(
             "UPDATE submissions SET status = ?, total_score = ?, mean_avg_wait = ?, "
+            "mean_p95_wait = ?, passed_all = ?, worst_wait = ?, "
             "detail_json = ?, error = ? WHERE id = ?",
             (
                 "scored" if total_score is not None else "error",
                 total_score,
                 mean_avg_wait,
+                p95,
+                passed,
+                worst,
                 json.dumps(detail) if detail is not None else None,
                 error,
                 submission_id,
@@ -310,6 +328,37 @@ def unfinished_submission_ids(db_path: Path) -> List[int]:
         return [row["id"] for row in rows]
 
 
+def _rank_wait(row) -> float:
+    """How long people waited, in one number: mean wait plus a tail penalty.
+
+    The 0.3 on p95 is why a controller that is merely average-good loses to one
+    that also keeps its worst cases tight. Legacy rows predate mean_p95_wait,
+    so fall back to the mean alone rather than dropping them off the board.
+    """
+    avg = row["mean_avg_wait"]
+    if avg is None:
+        return float("inf")
+    try:
+        p95 = row["mean_p95_wait"]
+    except (IndexError, KeyError):
+        p95 = None
+    return float(avg) + 0.3 * float(p95 if p95 is not None else 0.0)
+
+
+def _submission_rank(row):
+    """Requirements first, then waiting. Never the composite score.
+
+    A submission that misses a requirement ranks below every submission that
+    meets them all, however good its averages look. That ordering IS the
+    lesson; ranking by score would teach the opposite one.
+    """
+    try:
+        passed = bool(row["passed_all"])
+    except (IndexError, KeyError):
+        passed = False
+    return (0 if passed else 1, _rank_wait(row))
+
+
 def leaderboard(db_path: Path) -> List[Dict]:
     """One entry per participant: best scored submission plus activity info."""
     with connect(db_path) as conn:
@@ -324,18 +373,21 @@ def leaderboard(db_path: Path) -> List[Dict]:
                 (person["id"],),
             ).fetchall()
             scored = [s for s in subs if s["status"] == "scored"]
-            best = max(scored, key=lambda s: s["total_score"]) if scored else None
+            best = min(scored, key=_submission_rank) if scored else None
             latest = subs[-1] if subs else None
             entries.append(
                 {
                     "name": person["name"],
                     "attempts": len(subs),
                     "best_score": best["total_score"] if best else None,
+                    "best_passed": bool(best["passed_all"]) if best else None,
+                    "best_worst_wait": (best["worst_wait"] if best else None),
                     "best_at": best["created_at"] if best else None,
                     "best_detail": json.loads(best["detail_json"])
                     if best and best["detail_json"]
                     else None,
                     "best_mean_avg_wait": best["mean_avg_wait"] if best else None,
+                    "best_rank_wait": round(_rank_wait(best), 2) if best else None,
                     "latest_status": latest["status"] if latest else None,
                     "latest_error": latest["error"] if latest else None,
                     "last_activity": latest["created_at"] if latest else None,
@@ -346,8 +398,9 @@ def leaderboard(db_path: Path) -> List[Dict]:
         has_score = entry["best_score"] is not None
         return (
             0 if has_score else 1,
-            -(entry["best_score"] or 0.0),
-            entry["best_at"] or float("inf"),  # earlier achiever wins ties
+            0 if entry.get("best_passed") else 1,   # requirements come first
+            entry.get("best_rank_wait") or 0.0,     # then: how long people waited
+            entry["best_at"] or float("inf"),       # earlier achiever wins ties
             entry["name"].lower(),
         )
 

@@ -295,12 +295,14 @@ async function refresh() {{
 
   document.getElementById("meta").textContent =
     "Seeds " + payload.seeds.join(", ") + " \\u00b7 " + payload.scenarios.length +
-    " scenarios per evaluation \\u00b7 requirements before score \\u00b7 " +
+    (payload.scenarios.length === 1 ? " scenario" : " scenarios") +
+    " scored this act \\u00b7 requirements before averages \\u00b7 " +
     payload.standings.length + " participant(s)" +
     (payload.backlog > 0 ? " \\u00b7 " + payload.backlog + " evaluation(s) queued" : "");
 
   const head = document.getElementById("head-row");
-  head.replaceChildren(el("th", "left", "#"), el("th", "left", "Participant"), el("th", "", "Best"));
+  head.replaceChildren(el("th", "left", "#"), el("th", "left", "Participant"),
+                       el("th", "left", "Requirements"), el("th", "", "Wait"));
   for (const s of payload.scenarios) head.appendChild(el("th", "", s.title));
   head.appendChild(el("th", "", "Tries"));
   head.appendChild(el("th", "", "Last upload"));
@@ -311,19 +313,35 @@ async function refresh() {{
   if (!payload.standings.length) {{
     const tr = el("tr");
     const td = el("td", "empty", "Waiting for the first participant\\u2026");
-    td.colSpan = 6 + payload.scenarios.length;
+    td.colSpan = 7 + payload.scenarios.length;
     tr.appendChild(td);
     body.appendChild(tr);
     return;
   }}
   payload.standings.forEach((entry, index) => {{
     const rank = index + 1;
-    const tr = el("tr", rank <= 3 && entry.best_score !== null ? "p" + rank : "");
+    // Only a passing run earns a podium colour. Ranking first while missing a
+    // requirement should never look like winning.
+    const tr = el("tr", rank <= 3 && entry.best_passed ? "p" + rank : "");
     const rankTd = el("td", "left");
     rankTd.appendChild(el("span", "badge", String(rank)));
     tr.appendChild(rankTd);
     tr.appendChild(el("td", "name", entry.name));
-    tr.appendChild(el("td", "total", entry.best_score === null ? "-" : entry.best_score.toFixed(2)));
+
+    const gateTd = el("td", "left");
+    if (entry.best_passed === null || entry.best_score === null) {{
+      gateTd.textContent = "\\u2014";
+    }} else if (entry.best_passed) {{
+      gateTd.appendChild(el("span", "status-scored", "all met"));
+    }} else {{
+      const miss = el("span", "status-error",
+        "missed: " + (entry.failed_gates.length ? entry.failed_gates.join(", ") : "a requirement"));
+      if (entry.best_worst_wait) miss.title = "worst wait " + entry.best_worst_wait + "s";
+      gateTd.appendChild(miss);
+    }}
+    tr.appendChild(gateTd);
+    tr.appendChild(el("td", "total", entry.best_wait === null || entry.best_wait === undefined
+      ? "-" : entry.best_wait.toFixed(1) + "s"));
     for (const s of payload.scenarios) tr.appendChild(scoreCell(entry.scenario_scores[s.name]));
     tr.appendChild(el("td", "", String(entry.attempts)));
     tr.appendChild(el("td", "", fmtAgo(entry.last_activity)));
@@ -1113,8 +1131,25 @@ setInterval(paint, 5000);
 """
 
 
-def control_page() -> str:
-    return CONTROL_HTML
+def control_page(enabled: bool = True) -> str:
+    """The organiser's act control.
+
+    When VCC_ADMIN_PASSWORD is unset the server refuses every act change, so
+    say that HERE rather than letting an organiser discover it from a 503 in
+    front of a room. Being unable to advance the act is a silent, total
+    failure of the challenge: everyone stays on Act 1 and nobody sees the trap.
+    """
+    if enabled:
+        return CONTROL_HTML
+    warning = (
+        '<div class="msg err" style="margin-bottom:18px">'
+        "<b>Act control is disabled.</b> No organiser password is set on the "
+        "server, so the room cannot be advanced past Act 1. Set "
+        "<code>VCC_ADMIN_PASSWORD</code> in the app settings and restart, "
+        "then reload this page."
+        "</div>"
+    )
+    return CONTROL_HTML.replace("<h1", warning + "<h1", 1)
 
 
 def signup_page(error: str = "") -> str:
