@@ -17,7 +17,7 @@ from .metrics import (
     score_run,
     total_score,
 )
-from .scenarios import DEFAULT_SEEDS, SCENARIOS, Scenario
+from .scenarios import ACT_SCENARIOS, DEFAULT_SEEDS, SCENARIOS, Scenario
 
 
 @dataclass
@@ -32,6 +32,24 @@ class SubmissionResult:
         if self.load_error:
             return 0.0
         return total_score(self.scenario_scores)
+
+    @property
+    def passed_all(self) -> bool:
+        """Every requirement, on every trace, on every seed."""
+        if self.load_error:
+            return False
+        runs = [r for s in self.scenario_scores for r in s.runs]
+        return bool(runs) and all(r.passed_all and r.error is None for r in runs)
+
+    @property
+    def worst_wait(self) -> int:
+        runs = [r for s in self.scenario_scores for r in s.runs if r.error is None]
+        return max((r.max_wait for r in runs), default=0)
+
+    @property
+    def mean_p95_wait(self) -> float:
+        runs = [r for s in self.scenario_scores for r in s.runs if r.error is None]
+        return sum(r.p95_wait for r in runs) / len(runs) if runs else 0.0
 
     @property
     def mean_avg_wait(self) -> float:
@@ -50,6 +68,9 @@ class SubmissionResult:
             "team": self.team,
             "policy_path": self.policy_path,
             "total_score": round(self.total, 2),
+            "passed_all": self.passed_all,
+            "worst_wait": self.worst_wait,
+            "mean_p95_wait": round(self.mean_p95_wait, 2),
             "mean_avg_wait": round(self.mean_avg_wait, 2),
             "load_error": self.load_error,
             "scenarios": [s.to_dict() for s in self.scenario_scores],
@@ -100,12 +121,12 @@ def _short_error(exc: BaseException) -> str:
     return f"{last}{where}"
 
 
-def evaluate_run(module, scenario: Scenario, seed: int) -> RunMetrics:
+def evaluate_run(module, scenario: Scenario, seed: int, act: str = "act2") -> RunMetrics:
     """Run one (scenario, seed) with a fresh policy instance."""
     try:
         policy = module.Policy()
         result = Simulation(scenario, seed).run(policy)
-        return score_run(result)
+        return score_run(result, act)
     except Exception as exc:  # noqa: BLE001 - participant code can fail any way
         return failed_run(scenario.name, seed, _short_error(exc))
 
@@ -115,10 +136,19 @@ def evaluate_submission(
     scenario_names: Optional[Sequence[str]] = None,
     seeds: Optional[Iterable[int]] = None,
     team: Optional[str] = None,
+    act: Optional[str] = None,
 ) -> SubmissionResult:
     policy_path = Path(policy_path)
     seeds = tuple(seeds) if seeds else DEFAULT_SEEDS
-    names = list(scenario_names) if scenario_names else list(SCENARIOS)
+    # An act scores its own traces plus every earlier act's, so fixing Act 2
+    # by breaking Act 1 shows up as breaking Act 1.
+    if scenario_names is not None:
+        names = list(scenario_names)
+    elif act:
+        names = list(ACT_SCENARIOS.get(act, ()))
+    else:
+        names = list(SCENARIOS)
+    act = act or "act2"
 
     try:
         module = load_policy_module(policy_path)
@@ -137,9 +167,59 @@ def evaluate_submission(
         scenario = SCENARIOS[name]
         scenario_score = ScenarioScore(scenario=name, weight=scenario.weight)
         for seed in seeds:
-            scenario_score.runs.append(evaluate_run(module, scenario, seed))
+            scenario_score.runs.append(evaluate_run(module, scenario, seed, act))
         result.scenario_scores.append(scenario_score)
     return result
+
+
+
+# --------------------------------------------------------------------------- #
+# Replay
+#
+# The intersection view is not decoration -- it is how the rules get explained
+# without costing anyone reading time. Nobody reads that a switch burns six
+# seconds; they watch the amber lamp and see that nothing moves.
+#
+# A replay is recomputed on demand rather than stored: one run is ~0.03 s of
+# CPU, so caching it would cost more complexity than it saves.
+# --------------------------------------------------------------------------- #
+
+def replay(
+    policy_path: Path, scenario_name: str, seed: int = 101, stride: int = 2
+) -> Dict:
+    """Re-run one (scenario, seed) and record what the intersection looked like.
+
+    `stride` samples every Nth tick. At stride 2 a ten-minute run is 300 frames,
+    which is plenty for 25x playback and keeps the payload near 40 KB.
+    """
+    from .engine import LANES, PHASES  # local: keeps the module import graph flat
+
+    scenario = SCENARIOS[scenario_name]
+    module = load_policy_module(Path(policy_path))
+    frames: List[List] = []
+
+    def on_tick(state) -> None:
+        if state.time % stride:
+            return
+        frames.append([
+            PHASES.index(state.phase),
+            1 if state.in_transition else 0,
+            [state.queues[lane] for lane in LANES],
+            [state.oldest_wait[lane] for lane in LANES],
+        ])
+
+    result = Simulation(scenario, seed).run(module.Policy(), on_tick=on_tick)
+    metrics = score_run(result, scenario.act)
+    return {
+        "scenario": scenario_name,
+        "title": scenario.title,
+        "seed": seed,
+        "stride": stride,
+        "lanes": list(LANES),
+        "phases": list(PHASES),
+        "frames": frames,
+        "metrics": metrics.to_dict(),
+    }
 
 
 def discover_submissions(submissions_dir: Path) -> List[Path]:

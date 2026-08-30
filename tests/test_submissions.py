@@ -25,23 +25,23 @@ class TestDiscovery(unittest.TestCase):
 
 class TestDemoSubmissions(unittest.TestCase):
     def test_all_demo_teams_load_and_score(self):
-        quick = ["balanced_commute", "night_trickle"]
+        quick = ["pilot_morning", "deploy_residential"]
         for policy_path in discover_submissions(SUBMISSIONS):
             result = evaluate_submission(policy_path, scenario_names=quick, seeds=[101])
             self.assertIsNone(result.load_error, policy_path)
             self.assertFalse(result.errors, f"{policy_path}: {result.errors}")
             self.assertGreater(result.total, 20.0, policy_path)
 
-    def test_adaptive_beats_fixed_on_night_trickle(self):
+    def test_adaptive_beats_fixed_on_quiet_street(self):
         """The core lesson of the workshop must hold in the harness."""
         fixed = evaluate_submission(
             SUBMISSIONS / "team_fixed_timer" / "policy.py",
-            scenario_names=["night_trickle"],
+            scenario_names=["deploy_residential"],
             seeds=[101, 202],
         )
         adaptive = evaluate_submission(
             SUBMISSIONS / "team_max_pressure" / "policy.py",
-            scenario_names=["night_trickle"],
+            scenario_names=["deploy_residential"],
             seeds=[101, 202],
         )
         self.assertGreater(adaptive.total, fixed.total)
@@ -65,7 +65,7 @@ class TestCrashHandling(unittest.TestCase):
                 "        raise RuntimeError('kaboom')\n",
             )
             result = evaluate_submission(
-                policy, scenario_names=["night_trickle"], seeds=[101]
+                policy, scenario_names=["deploy_residential"], seeds=[101]
             )
             self.assertIsNone(result.load_error)
             self.assertEqual(result.total, 0.0)
@@ -77,7 +77,7 @@ class TestCrashHandling(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             policy = self._write_policy(Path(tmp), "def broken(:\n")
             result = evaluate_submission(
-                policy, scenario_names=["night_trickle"], seeds=[101]
+                policy, scenario_names=["deploy_residential"], seeds=[101]
             )
             self.assertIsNotNone(result.load_error)
             self.assertEqual(result.total, 0.0)
@@ -88,7 +88,7 @@ class TestCrashHandling(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             policy = self._write_policy(Path(tmp), "TEAM_NAME = 'NoClass'\n")
             result = evaluate_submission(
-                policy, scenario_names=["night_trickle"], seeds=[101]
+                policy, scenario_names=["deploy_residential"], seeds=[101]
             )
             self.assertIsNotNone(result.load_error)
             self.assertIn("Policy", result.load_error)

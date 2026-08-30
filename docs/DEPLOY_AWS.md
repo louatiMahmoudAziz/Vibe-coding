@@ -84,7 +84,7 @@ pip3 install --user boto3        # only needed for the AWS secret path
 ## 6. Configure
 
 ```bash
-export VCC_MODEL=gemini-2.5-flash
+export VCC_MODEL=gemini-3.6-flash
 export VCC_SECRET_ID=vibe-challenge/gemini
 export AWS_REGION=eu-west-1          # your region
 export VCC_BUDGET_TOKENS=35000       # ~16 generations per participant
@@ -94,7 +94,7 @@ export VCC_TARGET_RPM=800            # ~80% of your AI Studio limit
 
 `VCC_TARGET_RPM` is the one number to get right. Read your real limit at
 <https://aistudio.google.com/rate-limit> (toggle **All models**, find
-`gemini-2.5-flash`) and set this to about 80 % of it. Measured behaviour
+`gemini-3.6-flash`) and set this to about 80 % of it. Measured behaviour
 with 20 simultaneous submits:
 
 | concurrency | target RPM | worst wait |
@@ -135,7 +135,7 @@ instead of ending the session.
 ## 9. Calibrate the model
 
 ```bash
-python3 scripts/calibrate_model.py --model gemini-2.5-flash
+python3 scripts/calibrate_model.py --model gemini-3.6-flash
 ```
 
 Confirms the model discriminates between lazy and directed prompting before

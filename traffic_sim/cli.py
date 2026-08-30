@@ -3,9 +3,9 @@
     python -m traffic_sim.cli scenarios
     python -m traffic_sim.cli evaluate submissions/my_team/policy.py
     python -m traffic_sim.cli evaluate submissions/my_team/policy.py \
-        --scenario rush_hour_ns --seeds 7,8,9 --json
+        --scenario complaint_evening --seeds 7,8,9 --json
     python -m traffic_sim.cli watch submissions/my_team/policy.py \
-        --scenario flash_crowd --seed 101 --every 10
+        --scenario deploy_arena --seed 101 --every 10
 """
 
 from __future__ import annotations
@@ -136,7 +136,7 @@ def main(argv=None) -> int:
 
     watch = sub.add_parser("watch", help="replay one run with ASCII queue bars")
     watch.add_argument("policy", help="path to a policy.py")
-    watch.add_argument("--scenario", default="balanced_commute")
+    watch.add_argument("--scenario", default="pilot_morning")
     watch.add_argument("--seed", type=int, default=DEFAULT_SEEDS[0])
     watch.add_argument("--every", type=int, default=15, help="print every N sim-seconds")
 

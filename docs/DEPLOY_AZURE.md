@@ -140,7 +140,7 @@ No pip packages needed. The Azure secret path is pure stdlib.
 ## 5. Configure
 
 ```bash
-export VCC_MODEL=gemini-2.5-flash
+export VCC_MODEL=gemini-3.6-flash
 export VCC_KEYVAULT_URL=https://<your-vault>.vault.azure.net
 export VCC_KEYVAULT_SECRET=gemini-api-key
 export VCC_BUDGET_TOKENS=35000

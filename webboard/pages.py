@@ -126,6 +126,45 @@ BASE_CSS = """
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation: none; } .budget-fill { transition: none; }
   }
+
+  .btn .cost { display: block; font-size: 10px; font-weight: 500; opacity: .7;
+               letter-spacing: .04em; margin-top: 2px; }
+  .ai-answer { background: var(--panel-2); border: 1px solid var(--line);
+               border-left: 3px solid var(--green); border-radius: 0 8px 8px 0;
+               padding: 14px 16px; margin-top: 14px; font-size: 14.5px;
+               line-height: 1.6; white-space: pre-wrap; color: var(--text); }
+  .ai-answer .who { display: block; font-size: 10.5px; letter-spacing: .12em;
+                    text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+
+  /* --- intersection replay ----------------------------------------- */
+  .replay-head { display: flex; justify-content: space-between; align-items: center;
+                 gap: 14px; flex-wrap: wrap; }
+  .replay-pick { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pick { font: 500 12px/1 "Segoe UI", system-ui, sans-serif; background: #ffffff14;
+          color: var(--muted); border: 1px solid var(--line); padding: 7px 11px;
+          border-radius: 8px; cursor: pointer; }
+  .pick[aria-pressed="true"] { background: var(--accent); color: #201200;
+                               border-color: var(--accent); font-weight: 700; }
+  .pick:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  #replay-canvas { width: 100%; height: auto; display: block; border-radius: 12px;
+                   background: #070b16; border: 1px solid var(--line); }
+  .replay-foot { display: flex; justify-content: space-between; align-items: center;
+                 gap: 14px; flex-wrap: wrap; font-family: ui-monospace, monospace;
+                 font-size: 12px; color: var(--muted); }
+  .replay-key { display: flex; gap: 14px; flex-wrap: wrap; }
+  .replay-key span { display: inline-flex; align-items: center; gap: 6px; }
+  .replay-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .verdict-row { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+                 border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+                 margin-top: 12px; }
+  .vr { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+        background: var(--panel-2); padding: 11px 14px; font-family: ui-monospace, monospace;
+        font-size: 12.5px; }
+  .vr .lbl { color: var(--muted); }
+  .vr .out { font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .vr.pass .out { color: var(--green); }
+  .vr.fail .out { color: var(--red); }
+  .vr .dot { width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
 """
 
 # Renders the top-right user menu on any page when a session cookie is
@@ -356,15 +395,20 @@ AI_CARD = """
     <textarea id="prompt" spellcheck="true" rows="5"
       placeholder="Think about what the client actually asked for, then say what the policy must guarantee and what it should optimise."></textarea>
     <div class="ai-actions">
-      <button class="btn" type="button" id="ask">Ask the AI</button>
+      <button class="btn secondary" type="button" id="ask">Ask
+        <span class="cost">~1,200</span></button>
+      <button class="btn" type="button" id="build">Build
+        <span class="cost">~1,900</span></button>
       <span class="ai-note" id="ai-note"></span>
     </div>
+    <div id="ai-answer"></div>
   </div>
 """
 
 AI_SCRIPT = """
 const promptBox  = document.getElementById("prompt");
 const askBtn     = document.getElementById("ask");
+const buildBtn   = document.getElementById("build");
 const note       = document.getElementById("ai-note");
 const codeBox    = document.querySelector("textarea[name=code]");
 const budgetPct  = document.getElementById("budget-pct");
@@ -380,6 +424,7 @@ function paintBudget(b) {
   budgetInfo.textContent =
     b.remaining.toLocaleString() + " of " + b.granted.toLocaleString() + " tokens";
   askBtn.disabled = b.remaining <= 0;
+  buildBtn.disabled = b.remaining <= 0;
   if (b.remaining <= 0) {
     say("Your budget is spent. What you have now is what you ship.", "err");
   }
@@ -397,42 +442,227 @@ async function loadBudget() {
   } catch (err) { /* the page still works without the meter */ }
 }
 
-askBtn.addEventListener("click", async () => {
+async function send(mode, btn) {
   const prompt = promptBox.value.trim();
-  if (!prompt) { say("Tell the AI what to do first.", "err"); promptBox.focus(); return; }
+  if (!prompt) {
+    say(mode === "ask" ? "Ask the AI something first." : "Tell the AI what to build first.", "err");
+    promptBox.focus();
+    return;
+  }
 
-  askBtn.disabled = true;
+  askBtn.disabled = true; buildBtn.disabled = true;
   note.className = "ai-note";
-  note.innerHTML = '<span class="spinner"></span> Thinking\u2026';
+  note.innerHTML = '<span class="spinner"></span> ' +
+    (mode === "ask" ? "Thinking\u2026" : "Writing the controller\u2026");
 
   let res, payload;
   try {
     res = await fetch("/api/generate", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({prompt: prompt, code: codeBox.value || null}),
+      body: JSON.stringify({mode: mode, prompt: prompt, code: codeBox.value || null}),
     });
     payload = await res.json();
   } catch (err) {
-    askBtn.disabled = false;
+    askBtn.disabled = false; buildBtn.disabled = false;
     return say("Could not reach the server. Nothing was charged.", "err");
   }
 
   if (payload.budget) paintBudget(payload.budget);
-  askBtn.disabled = payload.budget ? payload.budget.remaining <= 0 : false;
+  const broke = payload.budget ? payload.budget.remaining <= 0 : false;
+  askBtn.disabled = broke; buildBtn.disabled = broke;
 
   if (!res.ok) {
     return say(payload.error || "The AI could not be reached.", "err");
   }
 
+  if (payload.mode === "ask") {
+    const box = document.createElement("div");
+    box.className = "ai-answer";
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = "Your AI engineer";
+    box.appendChild(who);
+    box.appendChild(document.createTextNode(payload.answer || ""));
+    document.getElementById("ai-answer").replaceChildren(box);
+    say("Answered - " + payload.charged.toLocaleString() +
+        " tokens. That was a controller you didn't generate.", "ok");
+    return;
+  }
+
   codeBox.value = payload.code;
+  document.getElementById("ai-answer").replaceChildren();
   codeBox.scrollIntoView({behavior: "smooth", block: "center"});
   const extra = payload.note ? " (" + payload.note + ")" : "";
   say("Controller updated - " + payload.charged.toLocaleString() +
       " tokens spent." + extra + " Read it before you submit.", "ok");
-});
+}
+
+askBtn.addEventListener("click", function () { send("ask", askBtn); });
+buildBtn.addEventListener("click", function () { send("build", buildBtn); });
 
 loadBudget();
+"""
+
+REPLAY_CARD = """
+  <div class="card" id="replay-card" hidden>
+    <div class="replay-head">
+      <h2 style="margin:0">Watch it run</h2>
+      <div class="replay-pick" id="replay-pick"></div>
+    </div>
+    <p class="hint" id="replay-hint">Your last submission, replayed. Vehicles turn amber
+       after 45 seconds and red after 90 &mdash; a red car is somebody filing a complaint.</p>
+    <canvas id="replay-canvas" width="1120" height="620"
+            aria-label="Replay of your controller running the intersection"></canvas>
+    <div class="replay-foot">
+      <span id="replay-clock">0:00</span>
+      <span class="replay-key">
+        <span><i style="background:#7f8cb5"></i> waiting</span>
+        <span><i style="background:#ffb84d"></i> over 45s</span>
+        <span><i style="background:#ff6b81"></i> over 90s</span>
+      </span>
+    </div>
+    <div class="verdict-row" id="replay-verdict"></div>
+  </div>
+"""
+
+REPLAY_SCRIPT = """
+const PHASE_LANES = {
+  NS_STRAIGHT: ["N_straight", "S_straight"], NS_LEFT: ["N_left", "S_left"],
+  EW_STRAIGHT: ["E_straight", "W_straight"], EW_LEFT: ["E_left", "W_left"]
+};
+const APPROACH = {
+  N: {dx: 0, dy: -1, ox: 1, oy: 0}, S: {dx: 0, dy: 1, ox: -1, oy: 0},
+  E: {dx: 1, dy: 0, ox: 0, oy: 1},  W: {dx: -1, dy: 0, ox: 0, oy: -1}
+};
+const rcv = document.getElementById("replay-canvas");
+const rctx = rcv.getContext("2d");
+const RW = rcv.width, RH = rcv.height, RCX = RW / 2, RCY = RH / 2;
+const ROAD = 132, CAR = 15, CGAP = 5;
+
+let replayData = null, frameAt = 0, replayTimer = null, lastSubId = null;
+
+function drawFrame(d, f) {
+  rctx.fillStyle = "#070b16"; rctx.fillRect(0, 0, RW, RH);
+  rctx.fillStyle = "#101728";
+  rctx.fillRect(0, RCY - ROAD / 2, RW, ROAD);
+  rctx.fillRect(RCX - ROAD / 2, 0, ROAD, RH);
+  rctx.strokeStyle = "#1b2440"; rctx.lineWidth = 2;
+  rctx.strokeRect(RCX - ROAD / 2, RCY - ROAD / 2, ROAD, ROAD);
+  rctx.strokeStyle = "#243050"; rctx.setLineDash([12, 14]);
+  rctx.beginPath();
+  rctx.moveTo(0, RCY); rctx.lineTo(RCX - ROAD / 2, RCY);
+  rctx.moveTo(RCX + ROAD / 2, RCY); rctx.lineTo(RW, RCY);
+  rctx.moveTo(RCX, 0); rctx.lineTo(RCX, RCY - ROAD / 2);
+  rctx.moveTo(RCX, RCY + ROAD / 2); rctx.lineTo(RCX, RH);
+  rctx.stroke(); rctx.setLineDash([]);
+
+  const phase = d.phases[f[0]], inTrans = f[1] === 1;
+  const open = PHASE_LANES[phase] || [];
+
+  d.lanes.forEach(function (lane, idx) {
+    const dir = lane[0], isLeft = lane.indexOf("left") > 0;
+    const a = APPROACH[dir], lat = isLeft ? 30 : -30, gap = ROAD / 2 + 14;
+    const isOpen = !inTrans && open.indexOf(lane) !== -1;
+
+    rctx.fillStyle = isOpen ? "#2ee6a8" : (inTrans ? "#ffb84d" : "#ff6b81");
+    rctx.globalAlpha = isOpen ? 1 : 0.55;
+    rctx.beginPath();
+    rctx.arc(RCX + a.dx * gap + a.ox * lat, RCY + a.dy * gap + a.oy * lat, 5.5, 0, 6.284);
+    rctx.fill(); rctx.globalAlpha = 1;
+
+    const n = Math.min(f[2][idx], 26), oldest = f[3][idx];
+    for (let i = 0; i < n; i++) {
+      const dd = gap + 12 + i * (CAR + CGAP);
+      const x = RCX + a.dx * dd + a.ox * lat - CAR / 2;
+      const y = RCY + a.dy * dd + a.oy * lat - CAR / 2;
+      // the front vehicle's wait is known exactly; those behind it waited less
+      const w = oldest * (1 - i / Math.max(n, 1));
+      rctx.fillStyle = w > 90 ? "#ff6b81" : w > 45 ? "#ffb84d" : "#7f8cb5";
+      rctx.beginPath();
+      if (rctx.roundRect) rctx.roundRect(x, y, CAR, CAR, 3); else rctx.rect(x, y, CAR, CAR);
+      rctx.fill();
+    }
+    if (f[2][idx] > 26) {
+      const dd = gap + 12 + 26 * (CAR + CGAP);
+      rctx.fillStyle = "#ff6b81"; rctx.font = "600 13px monospace"; rctx.textAlign = "center";
+      rctx.fillText("+" + (f[2][idx] - 26),
+        RCX + a.dx * dd + a.ox * lat, RCY + a.dy * dd + a.oy * lat + 4);
+    }
+  });
+
+  rctx.fillStyle = "#8b93b0"; rctx.font = "500 12px monospace"; rctx.textAlign = "center";
+  rctx.fillText(inTrans ? "CHANGING" : phase.replace("_", " "), RCX, RCY + 4);
+
+  const secs = frameAt * d.stride;
+  document.getElementById("replay-clock").textContent =
+    Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
+}
+
+function showVerdict(m) {
+  const box = document.getElementById("replay-verdict");
+  box.replaceChildren();
+  (m.requirements || []).forEach(function (r) {
+    const row = document.createElement("div");
+    row.className = "vr " + (r.passed ? "pass" : "fail");
+    const l = document.createElement("span");
+    l.className = "lbl"; l.textContent = r.label + " \u2014 " + r.detail;
+    const o = document.createElement("span");
+    o.className = "out";
+    const dot = document.createElement("span"); dot.className = "dot";
+    o.appendChild(dot);
+    o.appendChild(document.createTextNode(r.actual));
+    row.appendChild(l); row.appendChild(o);
+    box.appendChild(row);
+  });
+}
+
+function playReplay(d) {
+  replayData = d; frameAt = 0;
+  if (replayTimer) clearInterval(replayTimer);
+  showVerdict(d.metrics);
+  replayTimer = setInterval(function () {
+    if (!replayData || !replayData.frames.length) return;
+    drawFrame(replayData, replayData.frames[frameAt]);
+    frameAt = (frameAt + 1) % replayData.frames.length;
+  }, 50);
+}
+
+async function loadReplay(subId, scenario) {
+  try {
+    const r = await fetch("/api/replay/" + subId + "/" + scenario, {cache: "no-store"});
+    if (!r.ok) return;
+    playReplay(await r.json());
+  } catch (err) { /* the page is fine without it */ }
+}
+
+function offerReplay(sub) {
+  if (!sub || sub.status !== "scored" || !sub.scenario_scores) return;
+  const card = document.getElementById("replay-card");
+  const names = Object.keys(sub.scenario_scores);
+  if (!names.length) return;
+  card.hidden = false;
+  if (String(sub.id) === String(lastSubId)) return;   // already showing this one
+  lastSubId = sub.id;
+
+  const pick = document.getElementById("replay-pick");
+  pick.replaceChildren();
+  names.forEach(function (name, i) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pick";
+    b.textContent = name.replace(/_/g, " ");
+    b.setAttribute("aria-pressed", i === names.length - 1 ? "true" : "false");
+    b.addEventListener("click", function () {
+      pick.querySelectorAll(".pick").forEach(function (o) {
+        o.setAttribute("aria-pressed", "false");
+      });
+      b.setAttribute("aria-pressed", "true");
+      loadReplay(sub.id, name);
+    });
+    pick.appendChild(b);
+  });
+  loadReplay(sub.id, names[names.length - 1]);
+}
 """
 
 ME_HTML = f"""<!DOCTYPE html>
@@ -446,6 +676,7 @@ ME_HTML = f"""<!DOCTYPE html>
 <div class="wrap" style="max-width: 860px">
 {_HEADER}
 {AI_CARD}
+{REPLAY_CARD}
   <div class="card">
     <h2 id="hello">My submissions</h2>
     <div id="banner"></div>
@@ -511,6 +742,8 @@ async function refresh() {{
     body.appendChild(tr);
     return;
   }}
+  const newest = payload.submissions.find(s => s.status === "scored");
+  if (newest) offerReplay(newest);
   for (const sub of payload.submissions) {{
     const tr = el("tr");
     tr.appendChild(el("td", "left", new Date(sub.created_at * 1000).toLocaleTimeString()));
@@ -533,6 +766,7 @@ async function refresh() {{
 refresh();
 setInterval(refresh, 3000);
 {AI_SCRIPT}
+{REPLAY_SCRIPT}
 </script>
 {USERMENU_SNIPPET}
 </body>

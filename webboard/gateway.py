@@ -40,7 +40,7 @@ from . import db
 # --------------------------------------------------------------------------- #
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-MODEL = os.environ.get("VCC_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("VCC_MODEL", "gemini-3.6-flash")
 API_KEY_ENV = "GEMINI_API_KEY"
 
 TEMPERATURE = 0.0          # see module docstring: this is deliberate
@@ -113,6 +113,41 @@ once before each run — use it to clear state between runs.
 * Output ONLY the ```python block. No explanation before or after.
 """
 
+ASK_INSTRUCTION = """\
+You advise an engineer who is directing an AI to build a traffic-signal
+controller. You do not write the controller yourself - another mode does that.
+You answer questions.
+
+What the engineer is working with:
+
+  One four-way intersection, eight lanes: a straight lane and a protected left
+  lane on each approach. Four non-conflicting phases, exactly one green at a
+  time: NS_STRAIGHT, NS_LEFT, EW_STRAIGHT, EW_LEFT.
+
+  Their controller is called once per simulated second and returns the phase it
+  wants green. It can see, per lane, the queue length and how long the front
+  vehicle has waited. It cannot see future arrivals, other intersections, or
+  which traffic pattern it is running against.
+
+  A green must hold 6 seconds before it may change. Every change costs 3 s of
+  yellow plus 1 s of all-red, and 2 s of startup lost time after the new green -
+  six seconds in which no vehicle moves. An open lane discharges one vehicle
+  every two seconds.
+
+Answer in plain prose. Be concrete and short - under 200 words unless the
+question genuinely needs more. Name specific failure modes and the trade-offs
+between them rather than giving general advice about software quality.
+
+You do NOT know: the arrival rates, how long any run lasts, which scenarios
+exist, or what thresholds their work is judged against. If asked, say so
+plainly and answer the part you can. Never invent those numbers - a confident
+guess is worse than an honest gap, because they will act on it.
+
+Do not write code, even if asked. Say that Build does that, and describe the
+approach in words instead.
+"""
+
+
 CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
 
@@ -126,6 +161,7 @@ class BudgetExhausted(RuntimeError):
 
 @dataclass
 class Generation:
+    mode: str            # "build" or "ask"
     code: str
     raw_text: str
     input_tokens: int
@@ -258,6 +294,32 @@ def call_log(db_path: Path, participant_id: int) -> list:
         ).fetchall()
     return [dict(row) for row in rows]
 
+
+
+
+def key_check() -> Dict[str, object]:
+    """Actually try to resolve the key, and say what happened.
+
+    key_source() reports which configuration is set, which is not the same as
+    the key being reachable - a distinction that cost real debugging time when
+    /health reported 'azure:keyvault:...' while the fetch was broken. This
+    performs the real lookup so the health endpoint means something. The key
+    itself is never returned; only whether it resolved, and how long it is.
+    """
+    try:
+        key = _api_key()
+    except GatewayError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "length": len(key)}
+
+
+def identity_mode() -> str:
+    """Which managed-identity mechanism this host exposes, if any."""
+    if os.environ.get("IDENTITY_ENDPOINT") and os.environ.get("IDENTITY_HEADER"):
+        return "app-service"
+    if os.environ.get("MSI_ENDPOINT") and os.environ.get("MSI_SECRET"):
+        return "app-service-legacy"
+    return "imds-or-none"
 
 
 # --------------------------------------------------------------------------- #
@@ -498,12 +560,15 @@ def key_source() -> str:
     return "unset"
 
 
-def _call_model(user_prompt: str) -> Tuple[str, Dict[str, int]]:
+def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, int]]:
     """One upstream request. Returns (text, usage). Raises GatewayError."""
     body = json.dumps(
         {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+            "systemInstruction": {
+                "parts": [{"text": ASK_INSTRUCTION if mode == "ask"
+                           else SYSTEM_INSTRUCTION}]
+            },
             "generationConfig": {
                 "temperature": TEMPERATURE,
                 "maxOutputTokens": MAX_OUTPUT_TOKENS,
@@ -609,17 +674,26 @@ def validate_code(code: str) -> Optional[str]:
 
 
 def build_user_prompt(
-    participant_prompt: str, current_code: Optional[str], feedback: Optional[str]
+    participant_prompt: str,
+    current_code: Optional[str],
+    feedback: Optional[str],
+    mode: str = "build",
 ) -> str:
     prompt = (participant_prompt or "").strip()[:MAX_PROMPT_CHARS]
     blocks = []
-    if current_code:
+    if current_code and mode == "build":
         blocks.append(
             "The policy you are modifying:\n\n```python\n" + current_code.strip() + "\n```"
         )
+    elif current_code and mode == "ask":
+        blocks.append(
+            "For context, their current policy:\n\n```python\n"
+            + current_code.strip() + "\n```"
+        )
     if feedback:
         blocks.append("Loading the previous attempt failed with:\n\n" + feedback)
-    blocks.append("Instruction from the engineer:\n\n" + prompt)
+    label = "Question from the engineer:" if mode == "ask" else "Instruction from the engineer:"
+    blocks.append(label + "\n\n" + prompt)
     return "\n\n".join(blocks)
 
 
@@ -633,6 +707,7 @@ def generate(
     participant_id: int,
     participant_prompt: str,
     current_code: Optional[str] = None,
+    mode: str = "build",
 ) -> Generation:
     """Spend budget to produce a validated policy for one participant.
 
@@ -644,7 +719,9 @@ def generate(
     if not lock.acquire(timeout=MAX_QUEUE_WAIT_S):
         raise GatewayError("you already have a generation in flight")
     try:
-        return _generate_locked(db_path, participant_id, participant_prompt, current_code)
+        return _generate_locked(
+            db_path, participant_id, participant_prompt, current_code, mode
+        )
     finally:
         lock.release()
 
@@ -654,6 +731,7 @@ def _generate_locked(
     participant_id: int,
     participant_prompt: str,
     current_code: Optional[str] = None,
+    mode: str = "build",
 ) -> Generation:
     remaining = budget_remaining(db_path, participant_id)
     if remaining <= 0:
@@ -664,18 +742,24 @@ def _generate_locked(
     last_error: Optional[str] = None
 
     for attempt in range(1, FREE_RETRIES + 2):
-        user_prompt = build_user_prompt(participant_prompt, current_code, feedback)
+        user_prompt = build_user_prompt(
+            participant_prompt, current_code, feedback, mode
+        )
         started = time.time()
-        text, usage = _call_model(user_prompt)
+        text, usage = _call_model(user_prompt, mode)
         elapsed = time.time() - started
 
-        code = extract_code(text)
-        error = validate_code(code) if code else "no code block in the response"
+        if mode == "ask":
+            # Advice has no shape to validate. It costs budget and it is done.
+            code, error = None, None
+        else:
+            code = extract_code(text)
+            error = validate_code(code) if code else "no code block in the response"
 
         record_call(
             db_path,
             participant_id=participant_id,
-            model=MODEL,
+            model=MODEL + (":ask" if mode == "ask" else ""),
             temperature=TEMPERATURE,
             prompt=participant_prompt,
             response_text=text,
@@ -692,6 +776,7 @@ def _generate_locked(
             spent_this_call += usage["total"]
             remaining = spend_budget(db_path, participant_id, usage["total"])
             return Generation(
+                mode=mode,
                 code=code or "",
                 raw_text=text,
                 input_tokens=usage["input"],

@@ -126,6 +126,7 @@ class TickState:
     in_transition: bool
     phase_elapsed: int
     queues: Dict[str, int]
+    oldest_wait: Dict[str, int]   # drives the wait colouring in the replay
     departures: int
 
 
@@ -260,6 +261,10 @@ class Simulation:
                         in_transition=in_transition,
                         phase_elapsed=green_elapsed,
                         queues={lane: len(queues[lane]) for lane in LANES},
+                        oldest_wait={
+                            lane: (t - queues[lane][0].arrived) if queues[lane] else 0
+                            for lane in LANES
+                        },
                         departures=departures_this_tick,
                     )
                 )

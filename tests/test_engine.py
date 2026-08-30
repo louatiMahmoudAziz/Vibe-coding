@@ -41,13 +41,13 @@ class StayPutPolicy:
 
 class TestDeterminism(unittest.TestCase):
     def test_same_seed_same_result(self):
-        scenario = SCENARIOS["balanced_commute"]
+        scenario = SCENARIOS["pilot_morning"]
         a = score_run(Simulation(scenario, 42).run(RoundRobinPolicy()))
         b = score_run(Simulation(scenario, 42).run(RoundRobinPolicy()))
         self.assertEqual(a.to_dict(), b.to_dict())
 
     def test_different_seed_different_arrivals(self):
-        scenario = SCENARIOS["balanced_commute"]
+        scenario = SCENARIOS["pilot_morning"]
         a = Simulation(scenario, 1).run(StayPutPolicy())
         b = Simulation(scenario, 2).run(StayPutPolicy())
         self.assertNotEqual(
@@ -56,7 +56,7 @@ class TestDeterminism(unittest.TestCase):
 
 
 class TestSafetyInterlocks(unittest.TestCase):
-    def _timeline(self, policy, scenario_name="balanced_commute", seed=7):
+    def _timeline(self, policy, scenario_name="pilot_morning", seed=7):
         states = []
         Simulation(SCENARIOS[scenario_name], seed).run(policy, on_tick=states.append)
         return states
@@ -86,19 +86,19 @@ class TestSafetyInterlocks(unittest.TestCase):
         self.assertTrue(all(s == YELLOW + ALL_RED for s in streaks))
 
     def test_no_departures_during_transition(self):
-        states = self._timeline(ThrashingPolicy(), "rush_hour_ns")
+        states = self._timeline(ThrashingPolicy(), "complaint_evening")
         for state in states:
             if state.in_transition:
                 self.assertEqual(state.departures, 0)
 
     def test_invalid_phase_raises(self):
         with self.assertRaises(PolicyError):
-            Simulation(SCENARIOS["night_trickle"], 1).run(InvalidReturnPolicy())
+            Simulation(SCENARIOS["deploy_residential"], 1).run(InvalidReturnPolicy())
 
 
 class TestFlowConservation(unittest.TestCase):
     def test_served_never_exceeds_arrived_and_waits_nonnegative(self):
-        result = Simulation(SCENARIOS["rush_hour_ns"], 5).run(RoundRobinPolicy())
+        result = Simulation(SCENARIOS["complaint_evening"], 5).run(RoundRobinPolicy())
         served = [v for v in result.vehicles if v.served]
         self.assertLessEqual(len(served), len(result.vehicles))
         for vehicle in served:
@@ -106,14 +106,14 @@ class TestFlowConservation(unittest.TestCase):
 
     def test_saturation_flow_upper_bound(self):
         """A lane can never discharge more than 1 vehicle per 2 seconds of green."""
-        result = Simulation(SCENARIOS["gridlock_stress"], 3).run(StayPutPolicy())
+        result = Simulation(SCENARIOS["deploy_reversal"], 3).run(StayPutPolicy())
         # StayPut keeps NS_STRAIGHT green for the whole 1200 s horizon:
         # per-lane cap is (1200 - startup) * 0.5, two open lanes total.
         served = sum(1 for v in result.vehicles if v.served)
-        self.assertLessEqual(served, 2 * (SCENARIOS["gridlock_stress"].horizon // 2))
+        self.assertLessEqual(served, 2 * (SCENARIOS["deploy_reversal"].horizon // 2))
 
     def test_stay_put_serves_only_its_own_lanes(self):
-        result = Simulation(SCENARIOS["balanced_commute"], 9).run(StayPutPolicy())
+        result = Simulation(SCENARIOS["pilot_morning"], 9).run(StayPutPolicy())
         for vehicle in result.vehicles:
             if vehicle.served:
                 self.assertIn(vehicle.lane, ("N_straight", "S_straight"))

@@ -257,7 +257,8 @@ class TestServerEndToEnd(unittest.TestCase):
         self.assertEqual(entry["name"], "The Testers")
         self.assertEqual(entry["latest_status"], "scored")
         self.assertGreater(entry["best_score"], 20.0)
-        self.assertEqual(len(entry["scenario_scores"]), 5)
+        # six traces now: the two acts plus four deployment sites
+        self.assertEqual(len(entry["scenario_scores"]), 6)
 
         # 5. Personal API shows the submission history.
         with urllib.request.urlopen(

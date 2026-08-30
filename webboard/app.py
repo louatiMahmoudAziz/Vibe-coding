@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, Optional, Sequence
 from urllib.parse import parse_qs, quote, urlparse
 
+from traffic_sim import runner
 from traffic_sim.scenarios import DEFAULT_SEEDS, SCENARIOS
 
 from . import db, gateway, pages
@@ -170,6 +171,8 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "model": gateway.MODEL,
                     "temperature": gateway.TEMPERATURE,
                     "key_source": gateway.key_source(),
+                    "key_check": gateway.key_check(),
+                    "identity_mode": gateway.identity_mode(),
                     "ai_queue_depth": gateway.queue_depth(),
                 }
             )
@@ -185,6 +188,8 @@ class BoardHandler(BaseHTTPRequestHandler):
         if path == "/api/budget":
             return self._api_budget()
         parts = [p for p in path.split("/") if p]
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "replay":
+            return self._api_replay(parts[2], parts[3])
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "participant":
             return self._api_participant(parts[2])
         if len(parts) == 2 and parts[0] == "p":
@@ -221,6 +226,32 @@ class BoardHandler(BaseHTTPRequestHandler):
         self._html(pages.NOT_FOUND_HTML, status=404)
 
     # -- handlers -----------------------------------------------------------
+
+
+    def _api_replay(self, submission_id: str, scenario: str) -> None:
+        """Re-run one scored submission so the browser can animate it.
+
+        Recomputed rather than stored: a run is about 0.03 s, so caching would
+        cost more than it saves. The participant must own the submission.
+        """
+        person = self._session_participant()
+        if person is None:
+            return self._json({"error": "Sign in first."}, status=401)
+        try:
+            row = db.submission(self.server.db_path, int(submission_id))
+        except (TypeError, ValueError):
+            return self._json({"error": "Bad submission id."}, status=400)
+        if row is None or row["participant_id"] != person["id"]:
+            return self._json({"error": "Not found."}, status=404)
+        if not row["code_path"]:
+            return self._json({"error": "That submission has no code."}, status=404)
+        if scenario not in SCENARIOS:
+            return self._json({"error": "No such scenario."}, status=404)
+        try:
+            payload = runner.replay(Path(row["code_path"]), scenario)
+        except Exception as exc:  # noqa: BLE001 - participant code can fail anyhow
+            return self._json({"error": f"Could not replay: {exc}"}, status=500)
+        return self._json(payload)
 
     # -- AI gateway ---------------------------------------------------------
 
@@ -259,13 +290,14 @@ class BoardHandler(BaseHTTPRequestHandler):
         if not prompt:
             return self._json({"error": "Tell the AI what to do."}, status=400)
         current_code = payload.get("code") or None
+        mode = "ask" if str(payload.get("mode", "build")).lower() == "ask" else "build"
 
         def budget():
             return gateway.budget_state(self.server.db_path, person["id"])
 
         try:
             generation = gateway.generate(
-                self.server.db_path, person["id"], prompt, current_code
+                self.server.db_path, person["id"], prompt, current_code, mode
             )
         except gateway.BudgetExhausted:
             return self._json(
@@ -281,6 +313,8 @@ class BoardHandler(BaseHTTPRequestHandler):
 
         return self._json(
             {
+                "mode": generation.mode,
+                "answer": generation.raw_text if generation.mode == "ask" else None,
                 "code": generation.code,
                 "charged": generation.charged,
                 "attempts": generation.attempts,
@@ -417,8 +451,11 @@ class BoardHandler(BaseHTTPRequestHandler):
                 best = sub["total_score"]
             submissions.append(
                 {
+                    "id": sub["id"],
                     "created_at": sub["created_at"],
                     "status": sub["status"],
+                    "passed_all": (detail or {}).get("passed_all"),
+                    "worst_wait": (detail or {}).get("worst_wait"),
                     "total_score": sub["total_score"],
                     "error": sub["error"],
                     "scenario_scores": self._scenario_scores(detail),

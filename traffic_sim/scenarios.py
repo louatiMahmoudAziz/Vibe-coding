@@ -30,6 +30,8 @@ class Scenario:
     horizon: int
     weight: float
     rates: RateTable
+    act: str = "act1"          # act1 | act2 | deployment
+    hidden: bool = False       # deployment traces are never shown before Act 3
 
     def rate(self, lane: str, t: int) -> float:
         for start, end, rate in self.rates.get(lane, ()):
@@ -54,137 +56,162 @@ def _flat(horizon: int, straight: float, left: float, lanes=LANES) -> RateTable:
 
 
 def _build_scenarios() -> Dict[str, Scenario]:
+    """Three acts.
+
+    Capacity, for reference: cycling all four phases costs 24 s of dead time
+    (4 changes x [3 s yellow + 1 s all-red + 2 s startup]), so real throughput
+    is (C - 24) / C veh/s -- 0.60 at a 60 s cycle, 0.73 at 90 s, 0.80 at 120 s.
+
+    Every trace below sits BELOW that line. The previous rush-hour and gridlock
+    traces sat above it, which meant no policy could pass them and the score
+    measured nothing but how fast you drowned. Difficulty here comes from the
+    shape of demand, not from making the problem unwinnable.
+    """
     scenarios = {}
 
     # ------------------------------------------------------------------ #
-    # 1. Balanced commute: moderate symmetric demand. The sanity check.
+    # ACT 1 - the pilot. Moderate, symmetric, comfortably under capacity.
+    # A lazy prompt should pass this. That is the point.
     # ------------------------------------------------------------------ #
-    horizon = 900
-    scenarios["balanced_commute"] = Scenario(
-        name="balanced_commute",
-        title="Balanced Commute",
+    horizon = 600
+    scenarios["pilot_morning"] = Scenario(
+        name="pilot_morning",
+        title="Monday Morning",
         description=(
-            "Moderate, symmetric demand on all approaches for 15 minutes. "
-            "A reasonable policy should serve nearly everyone quickly."
+            "The pilot intersection on a normal weekday. Moderate demand, "
+            "roughly even on all four approaches."
         ),
         horizon=horizon,
         weight=1.0,
-        rates=_flat(horizon, straight=0.08, left=0.03),
+        act="act1",
+        rates=_flat(horizon, straight=0.075, left=0.028),
     )
 
     # ------------------------------------------------------------------ #
-    # 2. Rush hour: heavy N/S through-traffic, light everywhere else.
-    #    Rewards asymmetric green allocation; punishes rigid 25/25/25/25.
+    # ACT 2 - the complaint. East-west floods; the left-turn lanes trickle.
+    #
+    # This is the trap, and it is built deliberately. Left demand is ~1 vehicle
+    # per 70 s, so those queues are never long. A controller that switches on
+    # queue length alone never sees a reason to serve them, and a switching
+    # margin large enough to stop thrashing guarantees they starve. Total
+    # demand is 0.46 veh/s -- winnable, but only if you serve the small queues.
     # ------------------------------------------------------------------ #
-    horizon = 900
+    horizon = 600
     rates: RateTable = {
-        "N_straight": ((0, horizon, 0.22),),
-        "S_straight": ((0, horizon, 0.22),),
-        "N_left": ((0, horizon, 0.05),),
-        "S_left": ((0, horizon, 0.05),),
-        "E_straight": ((0, horizon, 0.05),),
-        "W_straight": ((0, horizon, 0.05),),
-        "E_left": ((0, horizon, 0.02),),
-        "W_left": ((0, horizon, 0.02),),
+        "E_straight": ((0, horizon, 0.150),),
+        "W_straight": ((0, horizon, 0.150),),
+        "N_straight": ((0, horizon, 0.050),),
+        "S_straight": ((0, horizon, 0.050),),
+        "N_left": ((0, horizon, 0.014),),
+        "S_left": ((0, horizon, 0.014),),
+        "E_left": ((0, horizon, 0.014),),
+        "W_left": ((0, horizon, 0.014),),
     }
-    scenarios["rush_hour_ns"] = Scenario(
-        name="rush_hour_ns",
-        title="North-South Rush Hour",
+    scenarios["complaint_evening"] = Scenario(
+        name="complaint_evening",
+        title="Thursday, 4 p.m.",
         description=(
-            "Heavy through-traffic on the North-South axis with light "
-            "cross-traffic. Give the main artery the green time it needs "
-            "without starving the side streets and left-turners."
+            "East-west through traffic dominates. The left-turn lanes see a "
+            "vehicle about once a minute -- and those are the drivers calling 311."
         ),
         horizon=horizon,
         weight=1.0,
+        act="act2",
         rates=rates,
     )
 
     # ------------------------------------------------------------------ #
-    # 3. Flash crowd: quiet, then a stadium lets out onto E/W for 4 min.
-    #    Rewards fast detection of and recovery from a demand spike.
+    # ACT 3 - deployment. Never shown before the freeze. Four intersections
+    # with different characters, none of them like the pilot.
     # ------------------------------------------------------------------ #
-    horizon = 1200
-    burst_start, burst_end = 300, 540
+
+    # Residential: almost empty. Punishes cycling through phases nobody wants.
+    horizon = 600
+    scenarios["deploy_residential"] = Scenario(
+        name="deploy_residential",
+        title="Bay Ridge, 3 a.m.",
+        description="A car every so often, from anywhere. Do not make them wait.",
+        horizon=horizon, weight=1.0, act="deployment", hidden=True,
+        rates=_flat(horizon, straight=0.012, left=0.005),
+    )
+
+    # Commuter corridor: extreme one-way demand, the mirror of Act 2.
+    horizon = 600
+    rates = {
+        "N_straight": ((0, horizon, 0.175),),
+        "S_straight": ((0, horizon, 0.038),),
+        "E_straight": ((0, horizon, 0.055),),
+        "W_straight": ((0, horizon, 0.055),),
+        "N_left": ((0, horizon, 0.022),),
+        "S_left": ((0, horizon, 0.010),),
+        "E_left": ((0, horizon, 0.018),),
+        "W_left": ((0, horizon, 0.018),),
+    }
+    scenarios["deploy_corridor"] = Scenario(
+        name="deploy_corridor",
+        title="Northbound Corridor",
+        description="Overwhelmingly one direction. The dominant axis is not the pilot's.",
+        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
+    )
+
+    # Arena: quiet, then four minutes of chaos, then quiet again.
+    horizon = 720
+    burst_a, burst_b = 180, 420
     rates = {}
     for lane in LANES:
-        base = 0.025 if lane.endswith("_straight") else 0.012
+        base = 0.020 if lane.endswith("_straight") else 0.008
         if lane in ("E_straight", "W_straight"):
-            rates[lane] = (
-                (0, burst_start, base),
-                (burst_start, burst_end, 0.30),
-                (burst_end, horizon, base),
-            )
+            rates[lane] = ((0, burst_a, base), (burst_a, burst_b, 0.170), (burst_b, horizon, base))
         elif lane in ("E_left", "W_left"):
-            rates[lane] = (
-                (0, burst_start, base),
-                (burst_start, burst_end, 0.08),
-                (burst_end, horizon, base),
-            )
+            rates[lane] = ((0, burst_a, base), (burst_a, burst_b, 0.042), (burst_b, horizon, base))
         else:
             rates[lane] = ((0, horizon, base),)
-    scenarios["flash_crowd"] = Scenario(
-        name="flash_crowd",
-        title="Flash Crowd",
-        description=(
-            "A quiet grid until a stadium empties: East-West demand spikes "
-            "hard for four minutes, then fades. Detect the surge, absorb it, "
-            "and drain the residual queues before time runs out."
-        ),
-        horizon=horizon,
-        weight=1.0,
-        rates=rates,
+    scenarios["deploy_arena"] = Scenario(
+        name="deploy_arena",
+        title="Barclays, Game Night",
+        description="Nothing, then everything, then nothing. Absorb it and drain it.",
+        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
     )
 
-    # ------------------------------------------------------------------ #
-    # 4. Night trickle: sparse arrivals. Latency dominates the score;
-    #    a fixed cycle makes lone drivers idle at empty crossings.
-    # ------------------------------------------------------------------ #
-    horizon = 900
-    scenarios["night_trickle"] = Scenario(
-        name="night_trickle",
-        title="Night Trickle",
-        description=(
-            "3 a.m. traffic: a car every so often, from random directions. "
-            "Throughput is easy; the win is not making a lone driver sit at "
-            "an empty intersection while phantom phases cycle."
-        ),
-        horizon=horizon,
-        weight=1.0,
-        rates=_flat(horizon, straight=0.015, left=0.006),
-    )
-
-    # ------------------------------------------------------------------ #
-    # 5. Gridlock stress: near-capacity demand that tilts NS -> EW at
-    #    half-time. Rewards throughput efficiency and starvation control.
-    # ------------------------------------------------------------------ #
-    horizon = 1200
+    # Reversing: the busy axis flips at half-time. Punishes anything hard-coded.
+    horizon = 720
     half = horizon // 2
     rates = {
-        "N_straight": ((0, half, 0.16), (half, horizon, 0.10)),
-        "S_straight": ((0, half, 0.16), (half, horizon, 0.10)),
-        "N_left": ((0, half, 0.07), (half, horizon, 0.04)),
-        "S_left": ((0, half, 0.07), (half, horizon, 0.04)),
-        "E_straight": ((0, half, 0.10), (half, horizon, 0.16)),
-        "W_straight": ((0, half, 0.10), (half, horizon, 0.16)),
-        "E_left": ((0, half, 0.04), (half, horizon, 0.07)),
-        "W_left": ((0, half, 0.04), (half, horizon, 0.07)),
+        "N_straight": ((0, half, 0.135), (half, horizon, 0.045)),
+        "S_straight": ((0, half, 0.135), (half, horizon, 0.045)),
+        "E_straight": ((0, half, 0.045), (half, horizon, 0.135)),
+        "W_straight": ((0, half, 0.045), (half, horizon, 0.135)),
+        "N_left": ((0, half, 0.024), (half, horizon, 0.012)),
+        "S_left": ((0, half, 0.024), (half, horizon, 0.012)),
+        "E_left": ((0, half, 0.014), (half, horizon, 0.030)),
+        "W_left": ((0, half, 0.014), (half, horizon, 0.030)),
     }
-    scenarios["gridlock_stress"] = Scenario(
-        name="gridlock_stress",
-        title="Gridlock Stress Test",
-        description=(
-            "Twenty minutes at ~95% of practical capacity, with the dominant "
-            "axis flipping from North-South to East-West at half-time. Every "
-            "wasted second of green shows up in the score, and left-turn "
-            "lanes are one bad policy away from starvation."
-        ),
-        horizon=horizon,
-        weight=1.0,
-        rates=rates,
+    scenarios["deploy_reversal"] = Scenario(
+        name="deploy_reversal",
+        title="Queens Boulevard",
+        description="Busy north-south all morning, busy east-west all afternoon.",
+        horizon=horizon, weight=1.0, act="deployment", hidden=True, rates=rates,
     )
 
     return scenarios
+
+
+ACTS: Tuple[str, ...] = ("act1", "act2", "deployment")
+
+# Which traces score in each act. Later acts re-run everything before them --
+# a controller that fixes Act 2 by breaking Act 1 fails Act 1.
+ACT_SCENARIOS: Dict[str, Tuple[str, ...]] = {
+    "act1": ("pilot_morning",),
+    "act2": ("pilot_morning", "complaint_evening"),
+    "deployment": (
+        "pilot_morning", "complaint_evening",
+        "deploy_residential", "deploy_corridor", "deploy_arena", "deploy_reversal",
+    ),
+}
+
+
+def scenarios_for_act(act: str) -> Tuple[Scenario, ...]:
+    return tuple(SCENARIOS[n] for n in ACT_SCENARIOS.get(act, ()))
 
 
 SCENARIOS: Dict[str, Scenario] = _build_scenarios()

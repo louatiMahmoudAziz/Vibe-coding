@@ -67,7 +67,7 @@ class TestScoreRun(unittest.TestCase):
 
 class TestAggregation(unittest.TestCase):
     def test_failed_run_scores_zero_with_error(self):
-        metrics = failed_run("balanced_commute", 7, "boom")
+        metrics = failed_run("pilot_morning", 7, "boom")
         self.assertEqual(metrics.score, 0.0)
         self.assertEqual(metrics.error, "boom")
 

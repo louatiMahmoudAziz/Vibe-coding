@@ -9,7 +9,7 @@ Wants=network-online.target
 Type=simple
 User=ec2-user
 WorkingDirectory=/opt/vibe-challenge
-Environment="VCC_MODEL=gemini-2.5-flash"
+Environment="VCC_MODEL=gemini-3.6-flash"
 Environment="VCC_SECRET_ID=vibe-challenge/gemini"
 Environment="AWS_REGION=eu-west-1"
 Environment="VCC_BUDGET_TOKENS=35000"

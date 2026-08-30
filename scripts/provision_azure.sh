@@ -20,7 +20,7 @@ PLAN=${PLAN:-vibe-plan}
 APP=${APP:-}                    # must be globally unique
 KV=${KV:-}                      # must be globally unique
 SKU=${SKU:-B1}
-MODEL=${VCC_MODEL:-gemini-2.5-flash}
+MODEL=${VCC_MODEL:-gemini-3.6-flash}
 
 if [ "${1:-}" = "destroy" ]; then
   echo "Deleting resource group $RG and everything in it."

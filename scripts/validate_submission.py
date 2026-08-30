@@ -67,8 +67,8 @@ def main() -> int:
         return fail("set TEAM_NAME in policy.py (it is still 'Rename Me')")
     print(f"Team name: {team}")
 
-    print("Running a smoke evaluation (balanced_commute, seed 101) ...")
-    metrics = evaluate_run(module, SCENARIOS["balanced_commute"], 101)
+    print("Running a smoke evaluation (pilot_morning, seed 101) ...")
+    metrics = evaluate_run(module, SCENARIOS["pilot_morning"], 101)
     if metrics.error:
         return fail(f"policy crashed during simulation: {metrics.error}")
 
