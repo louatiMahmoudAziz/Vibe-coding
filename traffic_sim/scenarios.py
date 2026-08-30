@@ -126,13 +126,13 @@ def _build_scenarios() -> Dict[str, Scenario]:
         name="side_street",
         title="Thursday, 4:15 p.m.",
         description=(
-            "The avenue is packed. The side street sees about one car a "
-            "minute -- and those are the drivers who called 311."
+            "The avenue is packed. The side street sees a car every minute "
+            "or two -- and those are the drivers who called 311."
         ),
         horizon=600,
         weight=1.0,
         act="act2",
-        rates=_flat(600, ns=0.190, ew=0.018),
+        rates=_flat(600, ns=0.190, ew=0.010),
     )
 
     # ------------------------------------------------------------------ #

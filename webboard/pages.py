@@ -256,7 +256,8 @@ INDEX_HTML = f"""<!DOCTYPE html>
     Three requirements have to hold on every scenario: <code>traffic keeps moving</code>,
     <code>the typical trip is reasonable</code>, and <code>nobody is stranded</code>.
     Miss one and you rank below everyone who missed none, whatever your averages say.
-    Among those who pass, lowest waiting time wins. Updates automatically.
+    Clear an act to unlock the next one. Furthest act wins first, then requirements,
+    then lowest waiting time. Updates automatically.
   </footer>
 </div>
 <script>
@@ -302,7 +303,8 @@ async function refresh() {{
 
   const head = document.getElementById("head-row");
   head.replaceChildren(el("th", "left", "#"), el("th", "left", "Participant"),
-                       el("th", "left", "Requirements"), el("th", "", "Wait"));
+                       el("th", "", "Act"), el("th", "left", "Requirements"),
+                       el("th", "", "Wait"));
   for (const s of payload.scenarios) head.appendChild(el("th", "", s.title));
   head.appendChild(el("th", "", "Tries"));
   head.appendChild(el("th", "", "Last upload"));
@@ -313,7 +315,7 @@ async function refresh() {{
   if (!payload.standings.length) {{
     const tr = el("tr");
     const td = el("td", "empty", "Waiting for the first participant\\u2026");
-    td.colSpan = 7 + payload.scenarios.length;
+    td.colSpan = 8 + payload.scenarios.length;
     tr.appendChild(td);
     body.appendChild(tr);
     return;
@@ -327,6 +329,13 @@ async function refresh() {{
     rankTd.appendChild(el("span", "badge", String(rank)));
     tr.appendChild(rankTd);
     tr.appendChild(el("td", "name", entry.name));
+
+    const ACT_LABEL = {{act1: "1", act2: "2", deployment: "3"}};
+    const actTd = el("td");
+    const pill = el("span", "badge", ACT_LABEL[entry.act] || "1");
+    if (entry.act === "deployment") pill.style.color = "var(--green)";
+    actTd.appendChild(pill);
+    tr.appendChild(actTd);
 
     const gateTd = el("td", "left");
     if (entry.best_passed === null || entry.best_score === null) {{
@@ -436,6 +445,25 @@ PRIMER_CSS = """
                   color: var(--muted); font-size: 13.5px; border-bottom: 1px solid var(--line); }
   .gate-list li:last-child { border-bottom: 0; }
   .gate-list .num { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .unlock-veil { position: fixed; inset: 0; z-index: 90; display: flex;
+                 align-items: center; justify-content: center; padding: 24px;
+                 background: #04070fdd; animation: veil-in .25s ease-out; }
+  .unlock-card { background: #16224a; border: 1px solid #2ee6a8;
+                 border-radius: 18px; padding: 34px 38px; max-width: 460px;
+                 text-align: center; box-shadow: 0 0 60px #2ee6a855;
+                 animation: pop-in .35s cubic-bezier(.2,1.4,.4,1); }
+  .unlock-title { font-size: 13px; font-weight: 800; letter-spacing: 3px;
+                  color: #2ee6a8; margin-bottom: 12px; }
+  .unlock-card p { color: var(--text); font-size: 17px; line-height: 1.5;
+                   margin: 0 0 22px; }
+  @keyframes veil-in { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes pop-in { from { transform: scale(.86); opacity: 0 }
+                      to { transform: scale(1); opacity: 1 } }
+  body.flash-pass::after { content: ""; position: fixed; inset: 0; z-index: 80;
+                           pointer-events: none; background: #2ee6a8;
+                           animation: flash .9s ease-out forwards; }
+  @keyframes flash { from { opacity: .35 } to { opacity: 0 } }
 """
 
 def _phase_svg(green_ns: bool) -> str:
@@ -817,60 +845,118 @@ ACT_BOARD = """
 
 ACT_SCRIPT = """
 const ACT_COPY = [
-  ["act1", "Act 1 — The pilot", "Monday, 6:40 a.m.",
+  ["act1", "Act 1 \u2014 The pilot", "Monday, 6:40 a.m.",
    "Keep traffic moving and do not leave people sitting there. Switching the lights costs a few seconds each time."],
-  ["act2", "Act 2 — The dashboard was fine", "Thursday, 4:15 p.m.",
-   "Your numbers look great. Eleven complaints from one block — people turning left sit through six cycles. Nobody waits over 140 seconds. Ever. And the morning traffic still counts."],
-  ["deployment", "Act 3 — Eight hundred intersections", "Six weeks later",
-   "The pilot cleared review. Your controller ships as-is to every intersection in the program. There is no per-site tuning in this contract."],
+  ["act2", "Act 2 \u2014 The dashboard was fine", "Thursday, 4:15 p.m.",
+   "Two complaints this week. The avenue backs up in the evening rush, and the side street says they never get a green. Nobody waits over 140 seconds. Ever. And the morning traffic still counts."],
+  ["deployment", "Act 3 \u2014 Eight hundred intersections", "Six weeks later",
+   "The pilot cleared review. Your controller ships to every intersection in the program - including four you have never seen. There is no per-site tuning in this contract."],
 ];
 
 let shownAct = null;
 
-async function paintActs() {
-  let cur = "act1";
+// A short rising arpeggio, synthesised so there is no audio file to ship or
+// fail to load. Browsers only allow this after a user gesture, which a
+// submission always is, so by the time an act unlocks the context is live.
+function fanfare() {
   try {
-    cur = (await (await fetch("/api/act", {cache: "no-store"})).json()).act;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    [523.25, 659.25, 783.99, 1046.5].forEach(function (hz, i) {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = hz;
+      const t = ctx.currentTime + i * 0.11;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t); osc.stop(t + 0.45);
+    });
+    setTimeout(function () { ctx.close(); }, 1400);
+  } catch (err) { /* sound is a bonus, never a requirement */ }
+}
+
+function celebrate(title, line) {
+  fanfare();
+  const veil = document.createElement("div");
+  veil.className = "unlock-veil";
+  const card = document.createElement("div");
+  card.className = "unlock-card";
+  const h = document.createElement("div");
+  h.className = "unlock-title";
+  h.textContent = title;
+  const p = document.createElement("p");
+  p.textContent = line;
+  const btn = document.createElement("button");
+  btn.className = "btn";
+  btn.textContent = "Read the contract";
+  btn.addEventListener("click", function () { veil.remove(); });
+  card.appendChild(h); card.appendChild(p); card.appendChild(btn);
+  veil.appendChild(card);
+  veil.addEventListener("click", function (e) {
+    if (e.target === veil) veil.remove();
+  });
+  document.body.appendChild(veil);
+  document.body.classList.add("flash-pass");
+  setTimeout(function () { document.body.classList.remove("flash-pass"); }, 900);
+}
+
+async function paintActs() {
+  let data;
+  try {
+    data = await (await fetch("/api/act", {cache: "no-store"})).json();
   } catch (err) { return; }
+  const cur = data.act, cleared = data.cleared || [];
 
   const board = document.getElementById("act-board");
   if (cur === shownAct && board.children.length) return;
+
+  // Only celebrate a real advance seen in THIS tab, and remember it so a
+  // reload does not replay the fanfare.
+  const seen = sessionStorage.getItem("vcc-act");
   const advanced = shownAct !== null && cur !== shownAct;
+  const firstSight = shownAct === null && seen && seen !== cur;
   shownAct = cur;
+  try { sessionStorage.setItem("vcc-act", cur); } catch (err) {}
 
   const idx = ACT_COPY.findIndex(a => a[0] === cur);
   board.replaceChildren();
   ACT_COPY.forEach(function (a, i) {
+    const done = cleared.indexOf(a[0]) !== -1;
     const card = document.createElement("div");
-    card.className = "act " + (i < idx ? "done" : i === idx ? "live" : "locked");
+    card.className = "act " + (done ? "done" : i === idx ? "live" : "locked");
     const tag = document.createElement("div");
     tag.className = "tag";
-    tag.textContent = (i > idx ? "locked" : i === idx ? "now" : "done") + " · " + a[2];
+    tag.textContent = (done ? "cleared" : i === idx ? "now" : "locked") + " \u00b7 " + a[2];
     const h = document.createElement("h3");
-    h.textContent = i > idx ? "Not yet" : a[1];
+    h.textContent = i > idx ? "Locked" : a[1];
     const p = document.createElement("p");
     p.className = "client";
-    p.textContent = a[3];
+    p.textContent = i > idx
+      ? "Clear " + ACT_COPY[i - 1][1].split(" \u2014 ")[0] + " to open this."
+      : a[3];
     card.appendChild(tag); card.appendChild(h); card.appendChild(p);
     board.appendChild(card);
   });
 
-  const frozen = cur === "deployment";
-  document.getElementById("act-clock").textContent = frozen
-    ? "AI access is closed. Your last submission is what ships."
+  document.getElementById("act-clock").textContent = idx === 0
+    ? "Pass every requirement to unlock the next act."
     : "Scored on this act's traffic plus every earlier act's.";
-  if (typeof askBtn !== "undefined" && askBtn) askBtn.disabled = frozen;
-  if (typeof buildBtn !== "undefined" && buildBtn) buildBtn.disabled = frozen;
 
-  if (advanced && typeof say === "function") {
-    say(frozen
-      ? "The city exercised the rollout option. No more generations."
-      : "The client has been in touch - read the contract above.", "ok");
+  if (advanced || firstSight) {
+    celebrate(
+      cur === "act2" ? "ACT 1 CLEARED" : "ACT 2 CLEARED",
+      cur === "act2"
+        ? "The pilot works. The client has been in touch \u2014 there are two complaints."
+        : "The pilot cleared review. Your controller is going to eight hundred intersections."
+    );
   }
 }
 
 paintActs();
-setInterval(paintActs, 4000);
+setInterval(paintActs, 3000);
 """
 
 ME_HTML = f"""<!DOCTYPE html>
@@ -1030,126 +1116,6 @@ Go back to the <a href="/">leaderboard</a> or <a href="/signup">sign up</a>.</p>
 """
 
 
-
-CONTROL_HTML = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Run the room - Traffic Flow Challenge</title>
-<style>{BASE_CSS}
-  .act-btn {{ display: block; width: 100%; text-align: left; margin-bottom: 10px;
-             background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
-             padding: 16px 18px; border-radius: 12px; cursor: pointer; font: inherit; }}
-  .act-btn:hover {{ border-color: var(--accent); }}
-  .act-btn[aria-current="true"] {{ border-color: var(--accent); background: #ffd1661a; }}
-  .act-btn b {{ display: block; font-size: 16px; margin-bottom: 3px; }}
-  .act-btn span {{ color: var(--muted); font-size: 13.5px; }}
-  .act-btn .now {{ color: var(--accent); font-weight: 700; font-size: 12px;
-                   letter-spacing: .1em; text-transform: uppercase; }}
-  input[type=password] {{ width: 100%; background: #0a0f1e; color: var(--text);
-    border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
-    font-family: ui-monospace, monospace; font-size: 14px; }}
-</style>
-</head>
-<body>
-<div class="wrap" style="max-width: 620px">
-{_HEADER}
-  <div class="card">
-    <h2>Run the room</h2>
-    <p class="hint">Everyone moves together. Advancing the act changes what every
-       participant's next submission is scored against, and unlocks the client's
-       message on their page.</p>
-    <div id="banner"></div>
-    <label for="pw">Organiser password</label>
-    <input type="password" id="pw" autocomplete="current-password"
-           placeholder="VCC_ADMIN_PASSWORD">
-    <div style="margin-top:18px" id="acts"></div>
-  </div>
-</div>
-<script>
-const ACTS = [
-  ["act1", "Act 1 - The pilot",
-   "Monday morning. Moderate traffic. A lazy prompt passes, and it should."],
-  ["act2", "Act 2 - The dashboard was fine",
-   "The 311 complaints land. Nobody may wait over 140s - and Act 1 still counts."],
-  ["deployment", "Act 3 - Eight hundred intersections",
-   "Freeze the code. Four sites nobody has seen. Close the AI budget."],
-];
-
-function banner(text, kind) {{
-  const b = document.createElement("div");
-  b.className = "msg " + kind;
-  b.textContent = text;
-  document.getElementById("banner").replaceChildren(b);
-}}
-
-async function paint() {{
-  let cur = "act1";
-  try {{
-    cur = (await (await fetch("/api/act", {{cache: "no-store"}})).json()).act;
-  }} catch (err) {{ /* show the buttons anyway */ }}
-  const box = document.getElementById("acts");
-  box.replaceChildren();
-  ACTS.forEach(function (a) {{
-    const btn = document.createElement("button");
-    btn.className = "act-btn";
-    btn.type = "button";
-    btn.setAttribute("aria-current", a[0] === cur ? "true" : "false");
-    const t = document.createElement("b"); t.textContent = a[1];
-    const d = document.createElement("span"); d.textContent = a[2];
-    btn.appendChild(t); btn.appendChild(d);
-    if (a[0] === cur) {{
-      const n = document.createElement("div");
-      n.className = "now"; n.textContent = "Live now";
-      btn.appendChild(n);
-    }}
-    btn.addEventListener("click", function () {{ advance(a[0], a[1]); }});
-    box.appendChild(btn);
-  }});
-}}
-
-async function advance(act, label) {{
-  const pw = document.getElementById("pw").value;
-  if (!pw) {{ banner("Enter the organiser password first.", "err"); return; }}
-  const body = new URLSearchParams({{act: act, password: pw}});
-  const res = await fetch("/admin/act", {{
-    method: "POST",
-    headers: {{"Content-Type": "application/x-www-form-urlencoded"}},
-    body: body.toString(),
-  }});
-  const payload = await res.json();
-  if (!res.ok) {{ banner(payload.error || "Could not advance.", "err"); return; }}
-  banner("The room is now on " + label + ".", "ok");
-  paint();
-}}
-
-paint();
-setInterval(paint, 5000);
-</script>
-</body>
-</html>
-"""
-
-
-def control_page(enabled: bool = True) -> str:
-    """The organiser's act control.
-
-    When VCC_ADMIN_PASSWORD is unset the server refuses every act change, so
-    say that HERE rather than letting an organiser discover it from a 503 in
-    front of a room. Being unable to advance the act is a silent, total
-    failure of the challenge: everyone stays on Act 1 and nobody sees the trap.
-    """
-    if enabled:
-        return CONTROL_HTML
-    warning = (
-        '<div class="msg err" style="margin-bottom:18px">'
-        "<b>Act control is disabled.</b> No organiser password is set on the "
-        "server, so the room cannot be advanced past Act 1. Set "
-        "<code>VCC_ADMIN_PASSWORD</code> in the app settings and restart, "
-        "then reload this page."
-        "</div>"
-    )
-    return CONTROL_HTML.replace("<h1", warning + "<h1", 1)
 
 
 def signup_page(error: str = "") -> str:

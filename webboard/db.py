@@ -200,25 +200,40 @@ def participant_by_token(db_path: Path, token: str) -> Optional[Dict]:
 ACTS = ("act1", "act2", "deployment")
 
 
-def current_act(db_path: Path) -> str:
+def participant_act(db_path: Path, participant_id: int) -> str:
+    """Which act this participant has unlocked, derived from their own runs.
+
+    Progression is per-person, not per-room: you earn Act 2 by PASSING Act 1,
+    and Act 3 by passing Act 2. Nobody waits for an organiser and nobody waits
+    for the room, which matters when the whole thing lasts fifteen minutes and
+    people move at wildly different speeds.
+
+    Derived rather than stored, so it can never drift out of step with the
+    submissions it is supposed to describe.
+    """
     with connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT value FROM board_state WHERE key = 'act'"
-        ).fetchone()
-    act = row["value"] if row else "act1"
-    return act if act in ACTS else "act1"
+        rows = conn.execute(
+            "SELECT act FROM submissions "
+            "WHERE participant_id = ? AND status = 'scored' AND passed_all = 1",
+            (participant_id,),
+        ).fetchall()
+    cleared = {row["act"] for row in rows}
+    reached = 0
+    for index, act in enumerate(ACTS):
+        if act in cleared:
+            reached = max(reached, min(index + 1, len(ACTS) - 1))
+    return ACTS[reached]
 
 
-def set_current_act(db_path: Path, act: str) -> str:
-    if act not in ACTS:
-        raise ValueError(f"unknown act {act!r}")
+def acts_cleared(db_path: Path, participant_id: int) -> List[str]:
+    """Every act this participant has a passing run for."""
     with connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO board_state (key, value) VALUES ('act', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (act,),
-        )
-    return act
+        rows = conn.execute(
+            "SELECT DISTINCT act FROM submissions "
+            "WHERE participant_id = ? AND status = 'scored' AND passed_all = 1",
+            (participant_id,),
+        ).fetchall()
+    return [a for a in ACTS if a in {row["act"] for row in rows}]
 
 
 def submissions_in_act(db_path: Path, participant_id: int, act: str) -> List[Dict]:
@@ -372,12 +387,31 @@ def leaderboard(db_path: Path) -> List[Dict]:
                 "ORDER BY created_at",
                 (person["id"],),
             ).fetchall()
-            scored = [s for s in subs if s["status"] == "scored"]
+            act = participant_act(db_path, person["id"])
+            all_scored = [s for s in subs if s["status"] == "scored"]
+            # Judge people on their most advanced work, and ONLY on that.
+            #
+            # Filtering to the act they are on would blank their row the
+            # instant they cleared one (they have no runs in the new act yet).
+            # Pooling every act instead would let a passing Act 1 run keep
+            # showing "all met" while their current Act 2 controller fails,
+            # which hides the entire reveal. So: the furthest act they have
+            # actually submitted in.
+            shown_act = max(
+                (s["act"] for s in all_scored),
+                key=lambda a: ACTS.index(a) if a in ACTS else -1,
+                default=act,
+            )
+            scored = [s for s in all_scored if s["act"] == shown_act]
             best = min(scored, key=_submission_rank) if scored else None
             latest = subs[-1] if subs else None
             entries.append(
                 {
                     "name": person["name"],
+                    "act": act,
+                    "act_index": ACTS.index(act),
+                    "shown_act": shown_act,
+                    "cleared": acts_cleared(db_path, person["id"]),
                     "attempts": len(subs),
                     "best_score": best["total_score"] if best else None,
                     "best_passed": bool(best["passed_all"]) if best else None,
@@ -397,8 +431,9 @@ def leaderboard(db_path: Path) -> List[Dict]:
     def sort_key(entry):
         has_score = entry["best_score"] is not None
         return (
+            -entry["act_index"],                    # furthest act reached wins
             0 if has_score else 1,
-            0 if entry.get("best_passed") else 1,   # requirements come first
+            0 if entry.get("best_passed") else 1,   # then requirements
             entry.get("best_rank_wait") or 0.0,     # then: how long people waited
             entry["best_at"] or float("inf"),       # earlier achiever wins ties
             entry["name"].lower(),
