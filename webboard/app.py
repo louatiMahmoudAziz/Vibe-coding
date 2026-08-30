@@ -177,6 +177,7 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "backlog": self.server.evaluator.backlog,
                     "model": gateway.MODEL,
+                    "fallback_model": gateway.MODEL_FALLBACK,
                     "temperature": gateway.TEMPERATURE,
                     "key_source": gateway.key_source(),
                     "key_check": gateway.key_check(),

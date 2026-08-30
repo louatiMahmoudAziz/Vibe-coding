@@ -41,6 +41,12 @@ from . import db
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 MODEL = os.environ.get("VCC_MODEL", "gemini-3.6-flash")
+# Google's "-latest" aliases move under us and their pools go UNAVAILABLE
+# under load (observed: five straight 503s on gemini-flash-latest while
+# gemini-flash-lite-latest answered every time). Pin the primary, and keep
+# a second family as a fallback so one provider outage cannot stop a room
+# of participants mid-round.
+MODEL_FALLBACK = os.environ.get("VCC_MODEL_FALLBACK", "gemini-flash-lite-latest").strip()
 API_KEY_ENV = "GEMINI_API_KEY"
 
 TEMPERATURE = 0.0          # see module docstring: this is deliberate
@@ -149,6 +155,15 @@ approach in words instead.
 
 
 CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
+
+
+class _UpstreamUnavailable(RuntimeError):
+    """Upstream kept failing after every retry. Internal: triggers fallback."""
+
+    def __init__(self, code: int, model: str):
+        super().__init__(f"{model} returned HTTP {code}")
+        self.code = code
+        self.model = model
 
 
 class GatewayError(RuntimeError):
@@ -560,8 +575,37 @@ def key_source() -> str:
     return "unset"
 
 
+def _model_chain() -> Tuple[str, ...]:
+    """Primary first, then the fallback if it is a different model."""
+    chain = [MODEL]
+    if MODEL_FALLBACK and MODEL_FALLBACK != MODEL:
+        chain.append(MODEL_FALLBACK)
+    return tuple(chain)
+
+
 def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, int]]:
-    """One upstream request. Returns (text, usage). Raises GatewayError."""
+    """Try each model in the chain. Raises GatewayError once all are exhausted."""
+    last: Optional[_UpstreamUnavailable] = None
+    for model in _model_chain():
+        try:
+            return _call_model_once(user_prompt, mode, model)
+        except _UpstreamUnavailable as exc:
+            last = exc
+            continue
+    code = last.code if last else 0
+    if code == 429:
+        raise GatewayError(
+            "too many requests are hitting the model at once. "
+            "Nothing was charged - wait a few seconds and try again."
+        )
+    raise GatewayError(
+        f"the model provider is unavailable right now (HTTP {code or 'timeout'}). "
+        f"This is on their side, not yours. Nothing was charged - try again in a moment."
+    )
+
+
+def _call_model_once(user_prompt: str, mode: str, model: str) -> Tuple[str, Dict[str, int]]:
+    """One upstream request against one model. Returns (text, usage)."""
     body = json.dumps(
         {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
@@ -577,7 +621,7 @@ def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, i
         }
     ).encode("utf-8")
 
-    url = f"{API_BASE}/{MODEL}:generateContent?key={_api_key()}"
+    url = f"{API_BASE}/{model}:generateContent?key={_api_key()}"
 
     payload = None
     last_throttle = ""
@@ -598,10 +642,7 @@ def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, i
             # the participant is never charged for either.
             if exc.code == 429 or 500 <= exc.code < 600:
                 if throttle_attempt >= RETRY_ON_429:
-                    raise GatewayError(
-                        f"the model is rate limited right now (HTTP {exc.code}). "
-                        f"Nothing was charged - try again in a moment."
-                    ) from exc
+                    raise _UpstreamUnavailable(exc.code, model) from exc
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
                 try:
                     delay = float(retry_after) if retry_after else 0.0
@@ -618,7 +659,7 @@ def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, i
             raise GatewayError(f"model request failed: {exc}") from exc
 
     if payload is None:
-        raise GatewayError(f"model request failed after retries ({last_throttle})")
+        raise _UpstreamUnavailable(0, model)
 
     usage_raw = payload.get("usageMetadata") or {}
     usage = {
