@@ -233,9 +233,10 @@ INDEX_HTML = f"""<!DOCTYPE html>
     <tbody id="rows"><tr><td class="empty" id="empty-cell">Waiting for the first participant&hellip;</td></tr></tbody>
   </table>
   <footer>
-    Per-scenario score = <code>60 &times; throughput</code> + <code>40 &times; latency</code>
-    &minus; <code>starvation penalty</code>; total is the average across scenarios.
-    Ranked by best submission; ties go to whoever got there first. Updates automatically.
+    Three requirements have to hold on every scenario: <code>traffic keeps moving</code>,
+    <code>the typical trip is reasonable</code>, and <code>nobody is stranded</code>.
+    Miss one and you rank below everyone who missed none, whatever your averages say.
+    Among those who pass, lowest waiting time wins. Updates automatically.
   </footer>
 </div>
 <script>
@@ -274,7 +275,7 @@ async function refresh() {{
 
   document.getElementById("meta").textContent =
     "Seeds " + payload.seeds.join(", ") + " \\u00b7 " + payload.scenarios.length +
-    " scenarios per evaluation \\u00b7 max score 100 \\u00b7 " +
+    " scenarios per evaluation \\u00b7 requirements before score \\u00b7 " +
     payload.standings.length + " participant(s)" +
     (payload.backlog > 0 ? " \\u00b7 " + payload.backlog + " evaluation(s) queued" : "");
 
