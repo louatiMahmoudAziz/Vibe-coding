@@ -40,7 +40,10 @@ from . import db
 # --------------------------------------------------------------------------- #
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-MODEL = os.environ.get("VCC_MODEL", "gemini-3.6-flash")
+# Measured 2026-08: 200 on every probe, ~0.8s to write a short function with
+# thinking disabled. Concrete version, not a "-latest" alias that Google can
+# repoint at an overloaded pool the morning of the workshop.
+MODEL = os.environ.get("VCC_MODEL", "gemini-3.1-flash-lite")
 # Google's "-latest" aliases move under us and their pools go UNAVAILABLE
 # under load (observed: five straight 503s on gemini-flash-latest while
 # gemini-flash-lite-latest answered every time). Pin the primary, and keep
@@ -50,8 +53,20 @@ MODEL_FALLBACK = os.environ.get("VCC_MODEL_FALLBACK", "gemini-flash-lite-latest"
 API_KEY_ENV = "GEMINI_API_KEY"
 
 TEMPERATURE = 0.0          # see module docstring: this is deliberate
-MAX_OUTPUT_TOKENS = 2000   # one runaway generation cannot eat a whole budget
-REQUEST_TIMEOUT_S = 45
+MAX_OUTPUT_TOKENS = int(os.environ.get("VCC_MAX_OUTPUT_TOKENS", "1100"))
+# Generation is sequential, so wall-clock scales with output length. A
+# controller policy is ~60 lines (~700 tokens); 1100 leaves headroom without
+# paying for a ceiling nobody reaches.
+REQUEST_TIMEOUT_S = int(os.environ.get("VCC_REQUEST_TIMEOUT_S", "30"))
+
+# Thinking tokens are the single largest source of latency on the flash
+# models and buy nothing for "write me a 60-line policy". 0 disables it;
+# set VCC_THINKING_BUDGET=-1 to omit the field entirely.
+THINKING_BUDGET = int(os.environ.get("VCC_THINKING_BUDGET", "0"))
+# Per-model, NOT global: the 3.5 family rejects thinkingBudget while 3.1
+# accepts it. A 400 from the fallback must never re-enable thinking on the
+# primary - that would silently make every participant slow again.
+_thinking_unsupported: set = set()
 MAX_PROMPT_CHARS = 4000    # a participant prompt longer than this is truncated
 
 DEFAULT_BUDGET_TOKENS = int(os.environ.get("VCC_BUDGET_TOKENS", "35000"))
@@ -606,20 +621,26 @@ def _call_model(user_prompt: str, mode: str = "build") -> Tuple[str, Dict[str, i
 
 def _call_model_once(user_prompt: str, mode: str, model: str) -> Tuple[str, Dict[str, int]]:
     """One upstream request against one model. Returns (text, usage)."""
-    body = json.dumps(
-        {
-            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "systemInstruction": {
-                "parts": [{"text": ASK_INSTRUCTION if mode == "ask"
-                           else SYSTEM_INSTRUCTION}]
-            },
-            "generationConfig": {
-                "temperature": TEMPERATURE,
-                "maxOutputTokens": MAX_OUTPUT_TOKENS,
-                "candidateCount": 1,
-            },
+    def _body() -> bytes:
+        generation = {
+            "temperature": TEMPERATURE,
+            "maxOutputTokens": MAX_OUTPUT_TOKENS,
+            "candidateCount": 1,
         }
-    ).encode("utf-8")
+        if THINKING_BUDGET >= 0 and model not in _thinking_unsupported:
+            generation["thinkingConfig"] = {"thinkingBudget": THINKING_BUDGET}
+        return json.dumps(
+            {
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                "systemInstruction": {
+                    "parts": [{"text": ASK_INSTRUCTION if mode == "ask"
+                               else SYSTEM_INSTRUCTION}]
+                },
+                "generationConfig": generation,
+            }
+        ).encode("utf-8")
+
+    body = _body()
 
     url = f"{API_BASE}/{model}:generateContent?key={_api_key()}"
 
@@ -652,11 +673,21 @@ def _call_model_once(user_prompt: str, mode: str, model: str) -> Tuple[str, Dict
                 last_throttle = f"HTTP {exc.code}"
                 time.sleep(delay)
                 continue
+            if (exc.code == 400 and "thinking" in detail.lower()
+                    and model not in _thinking_unsupported):
+                # This model does not accept the field. Drop it for the rest
+                # of the process and retry once - never fail a participant
+                # over an optimisation.
+                _thinking_unsupported.add(model)
+                body = _body()
+                continue
             raise GatewayError(f"model returned HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise GatewayError(f"could not reach the model: {exc.reason}") from exc
         except (TimeoutError, OSError) as exc:
-            raise GatewayError(f"model request failed: {exc}") from exc
+            # A read timeout is the same user-visible problem as a 503: this
+            # model is not answering. Let the chain try the next one.
+            raise _UpstreamUnavailable(0, model) from exc
 
     if payload is None:
         raise _UpstreamUnavailable(0, model)

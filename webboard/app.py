@@ -178,6 +178,8 @@ class BoardHandler(BaseHTTPRequestHandler):
                     "backlog": self.server.evaluator.backlog,
                     "model": gateway.MODEL,
                     "fallback_model": gateway.MODEL_FALLBACK,
+                    "thinking_budget": gateway.THINKING_BUDGET,
+                    "max_output_tokens": gateway.MAX_OUTPUT_TOKENS,
                     "temperature": gateway.TEMPERATURE,
                     "key_source": gateway.key_source(),
                     "key_check": gateway.key_check(),
