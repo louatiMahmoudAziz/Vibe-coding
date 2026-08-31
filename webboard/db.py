@@ -162,7 +162,23 @@ def create_participant(db_path: Path, raw_name: str, raw_password: str) -> Dict:
             )
         except sqlite3.IntegrityError:
             raise SignupError(f"The name {name!r} is already taken.") from None
-        return {"id": cursor.lastrowid, "name": name, "token": token}
+
+        # A new participant starts at zero, unconditionally.
+        #
+        # SQLite reuses row ids after a DELETE, so if someone clears the board
+        # without also clearing the AI tables, the next signup inherits a
+        # deleted participant's spend -- they open the page already down a
+        # few thousand tokens with no idea why. Nobody should have to
+        # remember a cleanup order for that to be true.
+        new_id = cursor.lastrowid
+        for table in ("ai_budget", "ai_calls"):
+            try:
+                conn.execute(
+                    f"DELETE FROM {table} WHERE participant_id = ?", (new_id,)
+                )
+            except sqlite3.OperationalError:
+                pass  # gateway tables are created lazily; nothing to clear yet
+        return {"id": new_id, "name": name, "token": token}
 
 
 def authenticate(db_path: Path, raw_name: str, password: str) -> Optional[Dict]:
